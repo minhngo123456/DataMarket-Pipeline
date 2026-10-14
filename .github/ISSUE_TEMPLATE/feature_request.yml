@@ -1,0 +1,32 @@
+name: Đề xuất tính năng
+description: Đề xuất một cải tiến gắn với người dùng hoặc tiêu chí MVP.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Vấn đề cần giải quyết
+      description: Ai gặp vấn đề và trong tình huống nào?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Kết quả mong muốn
+      description: Người dùng cần làm được gì sau thay đổi?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Khu vực
+      options:
+        - Tài khoản / tenant / quyền
+        - Nguồn dữ liệu
+        - Catalog / SKU / giá
+        - Dashboard / báo cáo
+        - Hạn mức / vận hành
+        - Ngoài phạm vi MVP
+    validations:
+      required: true
