@@ -1,0 +1,50 @@
+name: Báo lỗi
+description: Ghi nhận lỗi có thể tái hiện trong ứng dụng hoặc luồng dữ liệu.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Không gửi dữ liệu khách hàng, secret hoặc token trong issue công khai."
+  - type: textarea
+    id: summary
+    attributes:
+      label: Mô tả lỗi
+      description: Điều gì đã xảy ra?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Các bước tái hiện
+      placeholder: "1. ... 2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kết quả mong đợi
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Khu vực
+      options:
+        - Web / Dashboard
+        - API / tenant / quyền
+        - Nạp CSV
+        - Thu thập API hoặc web
+        - Chuẩn hóa / ghép SKU
+        - Báo cáo / thông báo
+        - Hạ tầng
+        - Khác
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Log đã loại bỏ thông tin nhạy cảm
+      description: Chỉ dán log đã xóa token, URL riêng tư và dữ liệu khách hàng.
+    validations:
+      required: false
