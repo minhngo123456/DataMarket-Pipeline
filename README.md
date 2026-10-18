@@ -2,7 +2,7 @@
 
 > **Trạng thái:** bộ khung repo và thiết kế MVP. Phần mềm chưa được triển khai trong gói này.
 
-MarketData Pipeline hướng tới một SaaS giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
+MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 
 ## Mục tiêu MVP
 
@@ -38,28 +38,38 @@ Repo này mới là điểm bắt đầu: tài liệu kiến trúc và quy trìn
 
 ```mermaid
 flowchart LR
-    U[Người dùng] --> WEB[Web app]
-    WEB --> API[API và kiểm tra tenant]
-    API --> RAW[S3 raw]
-    API --> QCSV[SQS CSV]
-    SCH[EventBridge Scheduler] --> QSRC[SQS nguồn API và web]
-    RAW --> QCSV
-    QCSV --> EXT[Extractor / CSV worker]
+    U[React trong trình duyệt] -->|HTTPS và JWT| API[API Gateway và API Lambda]
+    API -->|Kiểm tra membership và tenant| DB[(DynamoDB)]
+    API -->|Trả presigned URL| U
+    U -->|PUT CSV bằng presigned URL| RAW[S3 Raw]
+    RAW --> EB[EventBridge Object Created]
+    EB --> QCSV[CSVQueue]
+    SCH[Scheduler mỗi 6 giờ] --> JD[Job Dispatcher Lambda]
+    DB -->|Tenant và nguồn đang bật| JD
+    JD --> QSRC[APIQueue và WebQueue]
+    QCSV --> EXT[Extractors]
     QSRC --> EXT
-    EXT --> QT[SQS transform]
+    EXT --> QT[TransformQueue]
     QT --> N[Normalizer]
-    N --> DB[(DynamoDB)]
-    DB --> AGG[Aggregator]
-    AGG --> AI[Claude API]
-    AGG --> REP[S3 reports / DynamoDB]
-    REP --> NOTIFY[Email hoặc Slack]
-    REP --> WEB
+    N --> DB
+    RS[Scheduler 08:00 Asia/Ho_Chi_Minh] --> RD[Report Dispatcher Lambda]
+    DB -->|Tenant đang hoạt động| RD
+    RD --> RQ[ReportQueue]
+    RQ --> AGG[Aggregator Lambda]
+    DB -->|Dữ liệu theo tenant| AGG
+    AGG <-->|HTTPS| AI[Claude API]
+    AGG --> REP[S3 Reports và trạng thái DynamoDB]
+    AGG -->|Sau khi lưu báo cáo| NOTIFY[Notification Lambda]
+    NOTIFY --> SNS[SNS email theo tenant]
+    NOTIFY --> SLACK[Slack webhook theo tenant]
+    API -->|Đọc báo cáo sau kiểm tra quyền| REP
 ```
 
-Đây là kiến trúc dự kiến trong báo cáo. Chi tiết ở [architecture.md](docs/architecture.md) và [data-contract.md](docs/data-contract.md).
+
+Đây là kiến trúc dự kiến trong báo cáo. Chi tiết ở [architecture.md](docs/architecture.md) và [data-contract.md](docs/data-contract.md). Phân công và bảng 576 giờ theo bản đã nộp ở [team-work-split.md](docs/team-work-split.md); Hoàng phụ trách chính hạ tầng AWS/IAM, chuẩn hóa và kiểm tra cách ly dữ liệu. Mỗi thành viên được phân bổ 144 giờ.
 
 ## Bắt đầu phát triển
 
-Chưa có runtime, dependency hay lệnh chạy ứng dụng được chốt. Trước khi viết code, nhóm nên thống nhất ngôn ngữ cho Lambda, công cụ quản lý hạ tầng, schema job/observation và cách chạy cục bộ. Sau đó cập nhật README này với các lệnh cài đặt, cấu hình và chạy thật.
+Phần xử lý dữ liệu của Hoàng dùng Python theo lựa chọn đã xác nhận; phiên bản runtime và dependency chưa được chốt. Trước khi viết code, nhóm cần thống nhất runtime cho các dịch vụ còn lại, công cụ quản lý hạ tầng, schema job/observation và cách chạy cục bộ. Sau đó cập nhật README này với các lệnh cài đặt, cấu hình và chạy thật.
 
 Không commit API key, webhook, credentials hoặc dữ liệu khách hàng. Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [SECURITY.md](SECURITY.md).

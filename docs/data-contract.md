@@ -46,4 +46,15 @@ Trường và giá trị trong ví dụ chỉ là đề xuất; tên, kiểu và
 
 ## Hướng thiết kế khóa/truy vấn
 
-Bản thiết kế đề xuất khóa tenant-scoped cho sản phẩm/lịch sử và một index theo ngày để đọc theo cửa sổ thời gian. Cần chốt partition/sort key, phân trang và độ trễ đồng bộ của index sau khi xác định truy vấn báo cáo; kiểm tra với giới hạn Pilot 100 SKU trước khi triển khai.
+Theo mục 2.2 của báo cáo đã nộp, giữ thiết kế dự kiến sau:
+
+| Dữ liệu | Khóa và cách đọc |
+| --- | --- |
+| Catalog | Theo tenant_id và product_id; SKU/biến thể được xác nhận trong catalog của tenant. |
+| Unified_Products | PK = `T#tenant_id#P#product_id`; SK = `source_id#observed_at#observation_id`. |
+| GSI theo ngày | PK = `T#tenant_id#DAY#YYYYMMDD`; SK = `observed_at#product_id#source_id#observation_id`. Đọc các ngày UTC giao cửa sổ báo cáo 24 giờ. |
+| Market_Summaries và AI_Intelligence_Reports | Khóa tenant và ngày, cùng report_id và kỳ dữ liệu cho số liệu/nhận định. |
+
+Đây là thiết kế, chưa phải schema đã triển khai. Cần chốt tên thuộc tính khóa, phân trang và cách biểu diễn thời gian trước khi code; không tự thay đổi mô hình truy vấn đã báo cáo. GSI có độ trễ đồng bộ; báo cáo lưu thời điểm chốt dữ liệu và số nguồn thành công. Lịch sử tối đa 30 ngày phải được kiểm tra ở truy vấn, không chỉ dựa vào cơ chế xóa nền.
+
+Job thu thập theo lịch mang tenant_id, source_id, scheduled_at và job_id ổn định qua retry; Dispatcher tạo metadata từ cấu hình phía máy chủ. Worker phải đối chiếu quyền sở hữu source/job trước khi xử lý. Normalizer ghi có điều kiện để cùng observation không tạo bản ghi mới khi gửi lại. Bản ghi lớn truyền tham chiếu S3 qua TransformQueue; phía gửi kiểm tra từng kết quả SendMessageBatch và chỉ thử lại phần thất bại.

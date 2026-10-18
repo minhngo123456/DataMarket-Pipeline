@@ -12,10 +12,10 @@
 
 ## Thứ tự triển khai gợi ý
 
-1. Chốt schema và ranh giới tenant trước khi tách thành nhiều worker.
-2. Làm luồng CSV với fixture mẫu, vì đây là luồng ít phụ thuộc nguồn bên ngoài.
-3. Thêm một API mẫu và HTML tĩnh được phép thu thập; hiển thị trạng thái nguồn rõ ràng.
-4. Hoàn thiện chuẩn hóa/duyệt SKU, truy vấn và ma trận giá trước khi tạo AI report.
+1. Chốt schema và ranh giới tenant trước khi tách thành nhiều worker. Hoàng phụ trách chính hạ tầng AWS/IAM theo [phân công từ báo cáo đã nộp](team-work-split.md), không bàn giao toàn bộ AWS sang người ngoài nhóm.
+2. Làm luồng CSV với fixture mẫu; tích hợp presigned upload, S3 Object Created qua EventBridge, CSVQueue, Extractor và TransformQueue/Normalizer. Fixture hỗ trợ phát triển song song với hạ tầng AWS.
+3. Thêm Job Dispatcher sau lịch 6 giờ, một API mẫu và HTML tĩnh được phép thu thập; hiển thị trạng thái nguồn rõ ràng.
+4. Hoàn thiện chuẩn hóa/duyệt SKU, truy vấn và ma trận giá trước khi tạo AI report. Luồng báo cáo dùng Scheduler 08:00 Asia/Ho_Chi_Minh, Report Dispatcher, ReportQueue, Aggregator và Notification.
 5. Kiểm tra tenant và quyền xuyên suốt từ khi API/job đầu tiên xuất hiện, không đợi đến tuần cuối.
 
 ## Phạm vi kiểm soát

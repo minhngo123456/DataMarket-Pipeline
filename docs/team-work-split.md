@@ -1,42 +1,48 @@
-# Phân công MVP cho 4 người
+# Phân công theo báo cáo tiến độ đã nộp
 
-> Phân công đề xuất dựa trên phạm vi MVP trong báo cáo tiến độ. Mỗi người có một mảng sở hữu từ đầu đến cuối và có thể dùng AI để tăng tốc triển khai. Việc dựng và vận hành AWS được bàn giao riêng; nhóm phát triển dùng mock/local adapters cho đến khi môi trường AWS sẵn sàng.
+Nguồn đối chiếu: `2627I_INT3319_1_Progress_Report_1_Group_7.pdf`, Chương 3, trang 8. Nhóm 07, học phần Điện toán đám mây. Các số dưới đây là số giờ cần thiết dự kiến, không phải số giờ đã thực hiện.
 
-## Chủ sở hữu và đầu ra
+## Trách nhiệm chính
 
-| Người phụ trách | Mảng | Đầu ra cần bàn giao |
-| --- | --- | --- |
-| **Ngô Nguyễn Nhật Minh** | Trải nghiệm sản phẩm và web app | Luồng onboarding tenant; app shell và điều hướng; màn hình catalog/duyệt ghép SKU; Dashboard, ma trận so sánh và lịch sử giá; giao diện báo cáo; demo flow cho Admin, Analyst và Viewer. |
-| **Phạm Văn Hướng** | Nhập và thu thập dữ liệu | CSV upload/parser, ánh xạ cột và báo lỗi theo dòng; adapter cho một REST API mẫu; extractor cho HTML tĩnh được phép thu thập; trạng thái job/nguồn và retry có giới hạn; fixture mẫu để nhóm tích hợp không cần gọi nguồn thật. |
-| **Vũ Minh Hoàng** | Mô hình dữ liệu và xử lý giá | Hợp đồng job/observation có version; catalog theo tenant; chuẩn hóa SKU, giá, tiền tệ và thời điểm; hàng chờ duyệt ghép SKU; lịch sử 30 ngày và truy vấn ma trận 24 giờ; kiểm soát tenant ở repository/query và quota dữ liệu. |
-| **Đỗ Huy Hiếu** | Tài khoản, API dùng chung và báo cáo | Middleware xác thực và RBAC Admin/Analyst/Viewer; membership và quota phía máy chủ; API report; tổng hợp dữ liệu ngày, tích hợp Claude với giới hạn token và dữ liệu dẫn chứng; adapter gửi email/Slack; xử lý trạng thái khi AI hoặc kênh gửi lỗi. |
-
-## Ranh giới để tránh đụng việc
-
-- Minh sở hữu UI và luồng thao tác. Hướng sở hữu adapter đọc nguồn và trạng thái ingestion; Hoàng sở hữu schema chuẩn đầu ra và ghi dữ liệu.
-- Hoàng sở hữu catalog, mapping, observations và query giá. Hiếu sở hữu identity/access middleware, report API và luồng thông báo.
-- Hiếu chốt cùng Minh hình dạng dữ liệu mà màn hình báo cáo cần. Hoàng cung cấp dữ liệu tenant-scoped; Hướng cung cấp job/source status theo contract chung.
-- Mỗi hợp đồng API/job được ghi lại trước khi hai người cùng sửa một luồng. Thay đổi contract cần owner của phía phát ra và phía nhận cùng review.
-- Không để tenant_id do trình duyệt hoặc CSV quyết định; backend gắn tenant từ danh tính/membership và metadata job.
-
-## AWS là luồng bàn giao riêng
-
-Bốn mảng trên không nhận việc provision hoặc vận hành AWS. Người phụ trách AWS cung cấp endpoint/config cần thiết, cơ chế xác thực, queue/table/bucket names, secret references và quyền IAM. Trước khi nhận được các giá trị đó, nhóm dùng mock/local adapters với cùng contract để vẫn phát triển và demo được.
-
-## Nhịp tích hợp 5 tuần
-
-| Tuần | Bàn giao chung |
+| Thành viên | Trách nhiệm theo mục 3.2 và 3.5 |
 | --- | --- |
-| 1 | Minh chốt luồng người dùng; Hướng, Hoàng và Hiếu thống nhất source/job/observation/API contracts cùng dữ liệu mẫu. |
-| 2 | Minh dựng app shell; Hướng chạy được CSV bằng fixture; Hoàng có schema/repository và chuẩn hóa; Hiếu có auth stub, RBAC và contract API. |
-| 3 | Nối CSV vào catalog/lịch sử giá; thêm API mẫu và HTML fixture; xác nhận SKU thủ công; hai tenant dùng dữ liệu tách biệt. |
-| 4 | Nối dashboard/ma trận 24 giờ; chạy aggregation và AI report; thêm thông báo giả lập hoặc sandbox; xử lý dữ liệu cũ và lỗi nguồn. |
-| 5 | Chạy demo đầu cuối bằng fixtures; rà soát phân quyền và truy cập chéo tenant; sửa lỗi; chuẩn bị tài liệu demo. |
+| Ngô Nguyễn Nhật Minh | Chốt yêu cầu và trải nghiệm người dùng, giao diện/Dashboard; cùng rà soát ánh xạ catalog. |
+| Phạm Văn Hướng | Kết nối nguồn CSV, REST API mẫu và HTML tĩnh được phép; trạng thái nguồn, fixture và xử lý lỗi thu thập. |
+| Vũ Minh Hoàng | Hạ tầng AWS và IAM; tham gia chuẩn hóa/catalog, kiểm tra khóa tenant và cách ly dữ liệu. Phối hợp thống nhất schema, dữ liệu mẫu và truy vấn theo tenant. |
+| Đỗ Huy Hiếu | Đăng nhập, membership/RBAC và quota phía máy chủ; API, tổng hợp/Claude API, thông báo và giới hạn token/mức dùng. |
 
-## Quy tắc làm việc khi vibe code
+Không tách việc dựng AWS sang một người ngoài bốn thành viên như phân công trước đây. Hoàng phụ trách chính hạ tầng/IAM; các phần xác thực, quyền ứng dụng và quota do Hiếu phụ trách chính, có Hoàng phối hợp theo bảng giờ. Các hạng mục có nhiều người cùng tham gia, không giao toàn bộ catalog hoặc truy vấn giá riêng cho Hoàng.
 
-1. Mỗi người tạo nhánh cho một thay đổi có mục tiêu và mở PR nhỏ; ghi rõ file/contract nào mình sở hữu.
-2. Dùng fixtures và mock trước, không khóa tiến độ vào credential hay hạ tầng AWS.
-3. Người khác review luồng dữ liệu và ranh giới tenant; người viết tự kiểm tra thay đổi và ghi lại cách kiểm tra trong PR.
-4. Chốt quyết định schema/API ở tuần 1; sau đó cập nhật tài liệu contract trước khi đổi format.
-5. Ưu tiên một luồng chạy trọn vẹn: tải CSV → duyệt SKU → xem giá → xem báo cáo. Không mở rộng scraper hoặc AI trước khi luồng này ổn định.
+## Hạng mục công việc và số giờ cần thiết
+
+| WBS / công việc | Liên hệ kiến trúc | Tổng giờ | Nhật Minh | Văn Hướng | Minh Hoàng | Huy Hiếu | Tuần |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 1. Yêu cầu, UX và schema | F1-F4; mẫu dữ liệu, quyền, catalog | 40 | 24 | 8 | 8 | 0 | 1 |
+| 2. Hạ tầng và IAM | F5; S3, SQS/DLQ, EventBridge, DB | 56 | 0 | 8 | 40 | 8 | 1-2 |
+| 3. Đăng nhập, tenant, quota | F1/F5; Cognito, API, membership | 64 | 16 | 0 | 16 | 32 | 1-2 |
+| 4. CSV, API, web tĩnh | F2; 3 extractor và trạng thái nguồn | 96 | 0 | 64 | 24 | 8 | 2-3 |
+| 5. Catalog và Normalizer | F3; ánh xạ SKU, khóa tenant, idempotency | 64 | 16 | 24 | 24 | 0 | 3 |
+| 6. Tổng hợp và AI | F4; ma trận, Claude API, report_id | 56 | 0 | 8 | 0 | 48 | 3-4 |
+| 7. Dashboard, API và gửi tin | F1/F4; query API, UI, SNS/Slack | 88 | 56 | 0 | 8 | 24 | 2-4 |
+| 8. Kiểm thử và giám sát | F1-F5; E2E, tenant, quota, retry/DLQ | 64 | 8 | 24 | 24 | 8 | 4-5 |
+| 9. Tài liệu và demo | Toàn hệ thống; hướng dẫn, báo cáo | 32 | 24 | 8 | 0 | 0 | 5 |
+| 10. Dự phòng sửa lỗi | Tích hợp luồng dịch vụ và API/AI | 16 | 0 | 0 | 0 | 16 | 5 |
+| Tổng | Toàn bộ 5 phân hệ kiến trúc | 576 | 144 | 144 | 144 | 144 | 5 |
+
+Tổng 576 giờ gồm 560 giờ công việc và 16 giờ dự phòng. Mỗi người 144 giờ trong 5 tuần, trung bình 28,8 giờ/tuần. Cột Tuần là lịch dự kiến. Riêng Hoàng: 8 + 40 + 16 + 24 + 24 + 0 + 8 + 24 + 0 + 0 = 144 giờ.
+
+## Phối hợp và thứ tự tích hợp
+
+- Tuần 1: cả nhóm chốt source/job/observation/API contracts và dữ liệu mẫu; Minh chốt yêu cầu, Hoàng chuẩn bị hạ tầng/IAM.
+- Tuần 2: Cognito, tenant, quota; nhánh CSV và khung API/web. Hiếu phụ trách quyền ứng dụng, Hoàng phối hợp quyền hạ tầng và kiểm thử tenant ngay khi API xuất hiện.
+- Tuần 3: nối extractor với Normalizer/catalog, lịch sử giá và hàng chờ duyệt SKU. Hướng cung cấp schema/bản ghi mẫu; Hoàng cùng Minh và Hướng kiểm tra chuẩn hóa và chống trùng.
+- Tuần 4: Dashboard, ma trận 24 giờ, AI và thông báo. Hiếu nhận dữ liệu chuẩn/chỉ mục thời gian; Minh tích hợp UI; Hoàng hỗ trợ truy vấn và giám sát.
+- Tuần 5: kiểm thử đầu cuối, truy cập chéo tenant, lỗi nguồn/AI/thông báo và retry/DLQ; sửa lỗi và demo.
+
+Có thể dùng fixture/mock để phát triển song song, nhưng chúng không thay thế phần hạ tầng AWS và kiểm thử triển khai trong báo cáo. Khi thiếu thời gian, ưu tiên CSV và API, giảm phạm vi scraper trước khi giảm kiểm thử cách ly dữ liệu.
+
+## Ranh giới triển khai
+
+Hướng phụ trách extractor; Hoàng phối hợp hạ tầng và chuẩn hóa. Hiếu sở hữu API xác thực/quota và luồng báo cáo; Minh sở hữu UI. Thay đổi contract phải được phía phát và phía nhận cùng review. Không lấy tenant từ trình duyệt hoặc nội dung CSV; backend và worker xác minh theo membership, job và source phía máy chủ.
+
+Tiến độ xác nhận hiện tại là hồ sơ yêu cầu, kiến trúc và bộ khung repo. Không coi tài liệu hoặc mock là bằng chứng hệ thống AWS đã chạy hay đã đạt kiểm thử.
