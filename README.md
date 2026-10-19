@@ -1,6 +1,6 @@
 # MarketData Pipeline
 
-> **Trạng thái:** bộ khung repo và thiết kế MVP. Phần mềm chưa được triển khai trong gói này.
+> **Trạng thái local:** đã có phần Python/hạ tầng của Hoàng và kiểm thử giả lập AWS. Chưa triển khai AWS thật; các phần UI, API nghiệp vụ, API/HTML extractor và AI/reporting vẫn cần các thành viên tích hợp.
 
 MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 
@@ -17,7 +17,7 @@ Hạn mức Pilot trong tài liệu thiết kế: tối đa 100 SKU, 3 nguồn v
 
 ## Trạng thái hiện tại
 
-Repo này mới là điểm bắt đầu: tài liệu kiến trúc và quy trình GitHub đã được chuẩn bị; mã ứng dụng, hạ tầng và kiểm thử chưa được tạo. Lộ trình trong `docs/roadmap.md` là kế hoạch dự kiến, không phải báo cáo tiến độ hoàn thành.
+Phần của Hoàng có code tại `marketdata/`, worker tại `services/normalizer/` và `services/ingestion/`, cùng SAM template tại `infra/aws/template.yaml`. Xem [hướng dẫn chạy và bàn giao](docs/hoang-handover.md). Lộ trình 5 tuần vẫn là kế hoạch của cả nhóm; không coi kết quả giả lập là đã triển khai toàn bộ hệ thống.
 
 ## Cấu trúc
 
@@ -68,8 +68,21 @@ flowchart LR
 
 Đây là kiến trúc dự kiến trong báo cáo. Chi tiết ở [architecture.md](docs/architecture.md) và [data-contract.md](docs/data-contract.md). Phân công và bảng 576 giờ theo bản đã nộp ở [team-work-split.md](docs/team-work-split.md); Hoàng phụ trách chính hạ tầng AWS/IAM, chuẩn hóa và kiểm tra cách ly dữ liệu. Mỗi thành viên được phân bổ 144 giờ.
 
-## Bắt đầu phát triển
+## Chạy phần của Hoàng
 
-Phần xử lý dữ liệu của Hoàng dùng Python theo lựa chọn đã xác nhận; phiên bản runtime và dependency chưa được chốt. Trước khi viết code, nhóm cần thống nhất runtime cho các dịch vụ còn lại, công cụ quản lý hạ tầng, schema job/observation và cách chạy cục bộ. Sau đó cập nhật README này với các lệnh cài đặt, cấu hình và chạy thật.
+Dùng Python 3.12, từ thư mục gốc:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-dev.lock.txt
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\ruff.exe check .
+.venv\Scripts\cfn-lint.exe infra/aws/template.yaml
+.venv\Scripts\python.exe -m scripts.demo
+```
+
+Demo dùng Moto, không gọi tài khoản AWS thật. Fixture 100 dòng được chạy lại hai lần: 90 quan sát hợp lệ, 10 dòng lỗi, không tăng số quan sát và không xuất hiện ở tenant khác.
+
+Chi tiết contract, quyền và phần bàn giao nằm trong [hoang-handover.md](docs/hoang-handover.md). Hướng dẫn chuẩn bị triển khai ở [infra/aws/README.md](infra/aws/README.md). Không có route HTTP giả hoặc API key mẫu cho Claude/Slack.
 
 Không commit API key, webhook, credentials hoặc dữ liệu khách hàng. Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [SECURITY.md](SECURITY.md).

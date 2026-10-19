@@ -1,0 +1,1109 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Group 07 - Hoang: storage, queues, dispatchers and normalizer. No API
+  business routes or AI handlers.'
+Parameters:
+  WebOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Exact browser origin; update when frontend is deployed.
+  ScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues:
+    - DISABLED
+    - ENABLED
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+    - x86_64
+    Timeout: 45
+    MemorySize: 256
+Resources:
+  ControlTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  ObservationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+      - AttributeName: gsi1pk
+        AttributeType: S
+      - AttributeName: gsi1sk
+        AttributeType: S
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      GlobalSecondaryIndexes:
+      - IndexName: by_day
+        Projection:
+          ProjectionType: ALL
+        KeySchema:
+        - AttributeName: gsi1pk
+          KeyType: HASH
+        - AttributeName: gsi1sk
+          KeyType: RANGE
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Id: retention
+          Status: Enabled
+          ExpirationInDays: 30
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 7
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 1
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - content-type
+          AllowedMethods:
+          - PUT
+          AllowedOrigins:
+          - Ref: WebOrigin
+          MaxAge: 300
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Id: retention
+          Status: Enabled
+          ExpirationInDays: 30
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 7
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 1
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  CSVQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  CSVQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - CSVQueueDLQ
+          - Arn
+        maxReceiveCount: 5
+  APIQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  APIQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - APIQueueDLQ
+          - Arn
+        maxReceiveCount: 5
+  WebQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  WebQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - WebQueueDLQ
+          - Arn
+        maxReceiveCount: 5
+  TransformQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  TransformQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - TransformQueueDLQ
+          - Arn
+        maxReceiveCount: 5
+  ReportQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  ReportQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - ReportQueueDLQ
+          - Arn
+        maxReceiveCount: 5
+  DispatchDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  CSVObjectCreated:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+        - aws.s3
+        detail-type:
+        - Object Created
+        detail:
+          bucket:
+            name:
+            - Ref: RawBucket
+          reason:
+          - PutObject
+          object:
+            key:
+            - prefix: tenants/
+      Targets:
+      - Arn:
+          Fn::GetAtt:
+          - CSVQueue
+          - Arn
+        Id: CSVQueue
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DispatchDLQ
+            - Arn
+        RetryPolicy:
+          MaximumRetryAttempts: 5
+          MaximumEventAgeInSeconds: 3600
+  CSVQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+      - Ref: CSVQueue
+      - Ref: DispatchDLQ
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: events.amazonaws.com
+          Action: sqs:SendMessage
+          Resource:
+          - Fn::GetAtt:
+            - CSVQueue
+            - Arn
+          - Fn::GetAtt:
+            - DispatchDLQ
+            - Arn
+          Condition:
+            ArnEquals:
+              aws:SourceArn:
+                Fn::GetAtt:
+                - CSVObjectCreated
+                - Arn
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+  Normalizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.normalizer.app.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: &id001
+            Ref: ControlTable
+          OBSERVATIONS_TABLE: &id002
+            Ref: ObservationsTable
+      Events:
+        TransformMessages:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - TransformQueue
+              - Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 0
+            FunctionResponseTypes:
+            - ReportBatchItemFailures
+            ScalingConfig:
+              MaximumConcurrency: 2
+      Role:
+        Fn::GetAtt:
+        - NormalizerExecutionRole
+        - Arn
+  CSVWorker:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.ingestion.csv_worker.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          RAW_BUCKET:
+            Ref: RawBucket
+          TRANSFORM_QUEUE_URL:
+            Ref: TransformQueue
+      Events:
+        CSVUploads:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - CSVQueue
+              - Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            FunctionResponseTypes:
+            - ReportBatchItemFailures
+            ScalingConfig:
+              MaximumConcurrency: 2
+      Role:
+        Fn::GetAtt:
+        - CSVWorkerExecutionRole
+        - Arn
+  SchedulerGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties: {}
+  JobDispatcher:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.ingestion.dispatcher.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          DISPATCH_MODE: sources
+          API_QUEUE_URL:
+            Ref: APIQueue
+          WEB_QUEUE_URL:
+            Ref: WebQueue
+          REPORT_QUEUE_URL:
+            Ref: ReportQueue
+      Policies:
+      - Statement:
+        - &id003
+          Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          Resource:
+            Fn::GetAtt:
+            - ControlTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - dynamodb:Scan
+          Resource:
+            Fn::GetAtt:
+            - ControlTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource:
+          - Fn::GetAtt:
+            - APIQueue
+            - Arn
+          - Fn::GetAtt:
+            - WebQueue
+            - Arn
+  JobDispatcherScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: scheduler.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+            ArnEquals:
+              aws:SourceArn:
+                Fn::GetAtt:
+                - SchedulerGroup
+                - Arn
+      Policies:
+      - PolicyName: InvokeDispatcher
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - JobDispatcher
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - DispatchDLQ
+              - Arn
+  JobDispatcherSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      GroupName:
+        Ref: SchedulerGroup
+      ScheduleExpression: rate(6 hours)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Ref: ScheduleState
+      Target:
+        Arn:
+          Fn::GetAtt:
+          - JobDispatcher
+          - Arn
+        RoleArn:
+          Fn::GetAtt:
+          - JobDispatcherScheduleRole
+          - Arn
+        Input: '{"mode":"sources","scheduled_at":"<aws.scheduler.scheduled-time>"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 5
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DispatchDLQ
+            - Arn
+  ReportDispatcher:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.ingestion.dispatcher.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          DISPATCH_MODE: reports
+          API_QUEUE_URL:
+            Ref: APIQueue
+          WEB_QUEUE_URL:
+            Ref: WebQueue
+          REPORT_QUEUE_URL:
+            Ref: ReportQueue
+      Policies:
+      - Statement:
+        - *id003
+        - Effect: Allow
+          Action:
+          - dynamodb:Scan
+          Resource:
+            Fn::GetAtt:
+            - ControlTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource:
+          - Fn::GetAtt:
+            - ReportQueue
+            - Arn
+  ReportDispatcherScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: scheduler.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+            ArnEquals:
+              aws:SourceArn:
+                Fn::GetAtt:
+                - SchedulerGroup
+                - Arn
+      Policies:
+      - PolicyName: InvokeDispatcher
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - ReportDispatcher
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - DispatchDLQ
+              - Arn
+  ReportDispatcherSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      GroupName:
+        Ref: SchedulerGroup
+      ScheduleExpression: cron(0 8 * * ? *)
+      ScheduleExpressionTimezone: Asia/Ho_Chi_Minh
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Ref: ScheduleState
+      Target:
+        Arn:
+          Fn::GetAtt:
+          - ReportDispatcher
+          - Arn
+        RoleArn:
+          Fn::GetAtt:
+          - ReportDispatcherScheduleRole
+          - Arn
+        Input: '{"mode":"reports","scheduled_at":"<aws.scheduler.scheduled-time>"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 5
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DispatchDLQ
+            - Arn
+  NormalizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${Normalizer}
+      RetentionInDays: 7
+  CSVWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${CSVWorker}
+      RetentionInDays: 7
+  JobDispatcherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${JobDispatcher}
+      RetentionInDays: 7
+  ReportDispatcherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${ReportDispatcher}
+      RetentionInDays: 7
+  CSVQueueDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - CSVQueueDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  APIQueueDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - APIQueueDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  WebQueueDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - WebQueueDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  TransformQueueDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - TransformQueueDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  ReportQueueDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - ReportQueueDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  DispatchDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - DispatchDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UsernameAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+      - ALLOW_USER_SRP_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+        - Ref: WebOrigin
+        AllowMethods:
+        - GET
+        - POST
+        - PATCH
+        - OPTIONS
+        AllowHeaders:
+        - authorization
+        - content-type
+        MaxAge: 300
+  HttpStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      StageName: $default
+      AutoDeploy: true
+  JWTAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      AuthorizerType: JWT
+      Name: CognitoJWT
+      IdentitySource:
+      - $request.header.Authorization
+      JwtConfiguration:
+        Audience:
+        - Ref: UserPoolClient
+        Issuer:
+          Fn::Sub: https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+  WebOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name:
+          Fn::Sub: ${AWS::StackName}-web
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+        - Id: web
+          DomainName:
+            Fn::GetAtt:
+            - WebBucket
+            - RegionalDomainName
+          OriginAccessControlId:
+            Ref: WebOAC
+          S3OriginConfig:
+            OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          CachedMethods:
+          - GET
+          - HEAD
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: WebBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${WebBucket.Arn}/*
+          Condition:
+            StringEquals:
+              AWS:SourceArn:
+                Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - WebBucket
+            - Arn
+          - Fn::Sub: ${WebBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: RawBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - RawBucket
+            - Arn
+          - Fn::Sub: ${RawBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  ReportsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ReportsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - ReportsBucket
+            - Arn
+          - Fn::Sub: ${ReportsBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  ApiDataPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to Hieu API role after JWT, membership and RBAC checks are
+        implemented.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          Resource:
+          - Fn::GetAtt:
+            - ControlTable
+            - Arn
+          - Fn::GetAtt:
+            - ObservationsTable
+            - Arn
+          - Fn::Sub: ${ObservationsTable.Arn}/index/by_day
+        - Effect: Allow
+          Action:
+          - s3:PutObject
+          Resource:
+            Fn::Sub: ${RawBucket.Arn}/tenants/*/raw/*
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          Resource:
+            Fn::Sub: ${ReportsBucket.Arn}/tenants/*
+  NormalizerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: NormalizerDataAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - *id003
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:Query
+            Resource:
+              Fn::GetAtt:
+              - ObservationsTable
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+              - TransformQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  CSVWorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CSVWorkerDataAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - *id003
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            Resource:
+              Fn::Sub: ${RawBucket.Arn}/tenants/*/raw/*
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - TransformQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+              - CSVQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+Outputs:
+  ControlTable:
+    Value:
+      Ref: ControlTable
+  ObservationsTable:
+    Value:
+      Ref: ObservationsTable
+  RawBucket:
+    Value:
+      Ref: RawBucket
+  ReportsBucket:
+    Value:
+      Ref: ReportsBucket
+  WebBucket:
+    Value:
+      Ref: WebBucket
+  CSVQueueUrl:
+    Value:
+      Ref: CSVQueue
+  CSVQueueArn:
+    Value:
+      Fn::GetAtt:
+      - CSVQueue
+      - Arn
+  APIQueueUrl:
+    Value:
+      Ref: APIQueue
+  APIQueueArn:
+    Value:
+      Fn::GetAtt:
+      - APIQueue
+      - Arn
+  WebQueueUrl:
+    Value:
+      Ref: WebQueue
+  WebQueueArn:
+    Value:
+      Fn::GetAtt:
+      - WebQueue
+      - Arn
+  TransformQueueUrl:
+    Value:
+      Ref: TransformQueue
+  TransformQueueArn:
+    Value:
+      Fn::GetAtt:
+      - TransformQueue
+      - Arn
+  ReportQueueUrl:
+    Value:
+      Ref: ReportQueue
+  ReportQueueArn:
+    Value:
+      Fn::GetAtt:
+      - ReportQueue
+      - Arn
+  NormalizerArn:
+    Value:
+      Fn::GetAtt:
+      - Normalizer
+      - Arn
+  CSVWorkerArn:
+    Value:
+      Fn::GetAtt:
+      - CSVWorker
+      - Arn
+  JobDispatcherArn:
+    Value:
+      Fn::GetAtt:
+      - JobDispatcher
+      - Arn
+  ReportDispatcherArn:
+    Value:
+      Fn::GetAtt:
+      - ReportDispatcher
+      - Arn
+  UserPoolId:
+    Value:
+      Ref: UserPool
+  UserPoolClientId:
+    Value:
+      Ref: UserPoolClient
+  HttpApiId:
+    Value:
+      Ref: HttpApi
+  HttpApiEndpoint:
+    Value:
+      Fn::GetAtt:
+      - HttpApi
+      - ApiEndpoint
+  JWTAuthorizerId:
+    Value:
+      Ref: JWTAuthorizer
+  WebUrl:
+    Value:
+      Fn::Sub: https://${WebDistribution.DomainName}
+  ApiDataPolicyArn:
+    Value:
+      Ref: ApiDataPolicy

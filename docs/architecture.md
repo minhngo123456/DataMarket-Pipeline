@@ -41,8 +41,8 @@
 
 ## Câu hỏi cần chốt trước khi code
 
-- Phần xử lý dữ liệu của Hoàng dùng Python; còn cần chốt phiên bản runtime, dependency và công nghệ các dịch vụ khác.
-- Công cụ Infrastructure as Code, môi trường local và cách seed dữ liệu giả lập.
+- Phần Hoàng đã dùng Python 3.12, boto3, AWS SAM và pytest/Moto. Cần chốt công nghệ các dịch vụ còn lại.
+- AWS SAM đã có template; cần chốt Region, tài khoản sandbox và kiểm tra triển khai thật. Demo local dùng Moto và fixture, xem hướng dẫn bàn giao.
 - Schema version cho job, raw record và observation; quy tắc xử lý tỷ giá và thuế.
 - Danh sách endpoint, trang web được phép và chính sách sử dụng dữ liệu của nguồn.
 - Chính sách lưu/xóa dữ liệu, quản trị tenant, log và khôi phục backup.
@@ -51,3 +51,7 @@
 ## Phụ trách hạ tầng
 
 Theo báo cáo đã nộp, Vũ Minh Hoàng phụ trách chính hạ tầng AWS/IAM, chuẩn hóa và kiểm tra cách ly dữ liệu, phối hợp với các thành viên theo [bảng phân công](team-work-split.md). Mock/local phục vụ phát triển song song, không loại phần AWS khỏi nhiệm vụ của nhóm.
+
+## Phần đã có ở bản local
+
+Python workers, repository và SAM template của Hoàng đã được viết; xem [bàn giao](hoang-handover.md). Template chưa được deploy; chưa có route nghiệp vụ, API/HTML worker hay Aggregator/Notification. Phân biệt trạng thái code local với kiến trúc dự kiến của toàn hệ thống.

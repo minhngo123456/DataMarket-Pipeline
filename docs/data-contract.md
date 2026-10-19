@@ -1,6 +1,6 @@
 # Hợp đồng dữ liệu khởi đầu
 
-> Các tên dưới đây chuẩn hóa những khái niệm trong báo cáo để thảo luận. Đây chưa phải JSON Schema hoặc schema triển khai; cần chốt phiên bản trước khi các worker tích hợp.
+> Phần worker Python đã dùng message schema_version=1, kiểm tra tại marketdata/contracts.py. Ví dụ Observation dưới đây mô tả bản ghi đầu ra; đầu vào TransformQueue và giới hạn tích hợp được chốt ở docs/hoang-handover.md. Schema các API nghiệp vụ còn cần Hiếu và Minh thống nhất.
 
 ## Thực thể
 
@@ -32,7 +32,7 @@
 }
 ```
 
-Trường và giá trị trong ví dụ chỉ là đề xuất; tên, kiểu và version cần được thống nhất. `match_status` nên phân biệt ít nhất ghép đã xác nhận, chờ duyệt và bị từ chối. Dữ liệu giá chỉ để minh họa cấu trúc, không phải dữ liệu thị trường đo được.
+Ví dụ trên là Observation sau chuẩn hóa, không phải envelope đầu vào TransformQueue. Code giữ thêm giá/tiền tệ gốc, price_basis và expires_at; contract đầu vào nằm trong hướng dẫn bàn giao. `match_status` nên phân biệt ít nhất ghép đã xác nhận, chờ duyệt và bị từ chối. Dữ liệu giá chỉ để minh họa cấu trúc, không phải dữ liệu thị trường đo được.
 
 ## Nguyên tắc kiểm tra
 
@@ -55,6 +55,6 @@ Theo mục 2.2 của báo cáo đã nộp, giữ thiết kế dự kiến sau:
 | GSI theo ngày | PK = `T#tenant_id#DAY#YYYYMMDD`; SK = `observed_at#product_id#source_id#observation_id`. Đọc các ngày UTC giao cửa sổ báo cáo 24 giờ. |
 | Market_Summaries và AI_Intelligence_Reports | Khóa tenant và ngày, cùng report_id và kỳ dữ liệu cho số liệu/nhận định. |
 
-Đây là thiết kế, chưa phải schema đã triển khai. Cần chốt tên thuộc tính khóa, phân trang và cách biểu diễn thời gian trước khi code; không tự thay đổi mô hình truy vấn đã báo cáo. GSI có độ trễ đồng bộ; báo cáo lưu thời điểm chốt dữ liệu và số nguồn thành công. Lịch sử tối đa 30 ngày phải được kiểm tra ở truy vấn, không chỉ dựa vào cơ chế xóa nền.
+Code local dùng pk/sk và gsi1pk/gsi1sk theo mô hình trên, thời gian UTC có 6 chữ số phần giây. Chưa tạo bảng AWS thật. Cần Hiếu bổ sung API phân trang/cursor trước khi đưa truy vấn lên web. GSI có độ trễ đồng bộ; báo cáo lưu thời điểm chốt dữ liệu và số nguồn thành công. Lịch sử tối đa 30 ngày phải được kiểm tra ở truy vấn, không chỉ dựa vào cơ chế xóa nền.
 
 Job thu thập theo lịch mang tenant_id, source_id, scheduled_at và job_id ổn định qua retry; Dispatcher tạo metadata từ cấu hình phía máy chủ. Worker phải đối chiếu quyền sở hữu source/job trước khi xử lý. Normalizer ghi có điều kiện để cùng observation không tạo bản ghi mới khi gửi lại. Bản ghi lớn truyền tham chiếu S3 qua TransformQueue; phía gửi kiểm tra từng kết quả SendMessageBatch và chỉ thử lại phần thất bại.
