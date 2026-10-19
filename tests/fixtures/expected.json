@@ -1,0 +1,8 @@
+{
+  "rows": 100,
+  "counts": {
+    "accepted": 90,
+    "pending": 0,
+    "rejected": 10
+  }
+}
