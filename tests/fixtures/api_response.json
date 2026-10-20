@@ -1,0 +1,26 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "source_sku": "001-PHONE",
+      "price": "20100000",
+      "currency": "VND",
+      "observed_at": "2026-10-19T00:45:00Z",
+      "price_basis": "tax_included"
+    },
+    {
+      "source_sku": "002-LAPTOP",
+      "price": "35000000",
+      "currency": "VND",
+      "observed_at": "2026-10-19T00:45:00Z",
+      "price_basis": "tax_included"
+    },
+    {
+      "source_sku": "003-TABLET",
+      "price": "15000000",
+      "currency": "VND",
+      "observed_at": "2026-10-19T00:45:00Z",
+      "price_basis": "tax_included"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # MarketData Pipeline
 
-> **Trạng thái local:** đã có phần Python/hạ tầng của Hoàng và kiểm thử giả lập AWS. Chưa triển khai AWS thật; các phần UI, API nghiệp vụ, API/HTML extractor và AI/reporting vẫn cần các thành viên tích hợp.
+> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng và các Ingestion workers (CSV, REST API, Static HTML) của Hướng với 46 bài kiểm thử giả lập AWS đạt 100%. Chưa triển khai AWS thật; các phần UI (Minh), API nghiệp vụ và AI/reporting (Hiếu) vẫn cần các thành viên tích hợp.
 
 MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 
@@ -17,7 +17,9 @@ Hạn mức Pilot trong tài liệu thiết kế: tối đa 100 SKU, 3 nguồn v
 
 ## Trạng thái hiện tại
 
-Phần của Hoàng có code tại `marketdata/`, worker tại `services/normalizer/` và `services/ingestion/`, cùng SAM template tại `infra/aws/template.yaml`. Xem [hướng dẫn chạy và bàn giao](docs/hoang-handover.md). Lộ trình 5 tuần vẫn là kế hoạch của cả nhóm; không coi kết quả giả lập là đã triển khai toàn bộ hệ thống.
+- Phần hạ tầng và chuẩn hóa của Hoàng: code tại `marketdata/`, `services/normalizer/`, SAM template tại `infra/aws/template.yaml`. Xem [hướng dẫn chạy và bàn giao của Hoàng](docs/hoang-handover.md).
+- Phần Ingestion của Hướng: đầy đủ 3 extractor (CSV, REST API, Web HTML) tại `services/ingestion/`, fixtures và test tích hợp. Xem [hướng dẫn bàn giao của Hướng](docs/huong-handover.md).
+- Lộ trình 5 tuần vẫn là kế hoạch của cả nhóm; không coi kết quả giả lập là đã triển khai toàn bộ hệ thống.
 
 ## Cấu trúc
 
