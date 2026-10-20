@@ -45,4 +45,4 @@ Có thể dùng fixture/mock để phát triển song song, nhưng chúng không
 
 Hướng phụ trách extractor; Hoàng phối hợp hạ tầng và chuẩn hóa. Hiếu sở hữu API xác thực/quota và luồng báo cáo; Minh sở hữu UI. Thay đổi contract phải được phía phát và phía nhận cùng review. Không lấy tenant từ trình duyệt hoặc nội dung CSV; backend và worker xác minh theo membership, job và source phía máy chủ.
 
-Bản local đã có code Python, hạ tầng bằng SAM và kiểm thử giả lập cho phần của Hoàng; xem [bàn giao](hoang-handover.md). Không coi tài liệu hoặc mock là bằng chứng hệ thống AWS đã chạy. Bảng giờ là phân bổ dự kiến, không phải số giờ đã làm.
+Bản local đã có code Python, hạ tầng bằng SAM và kiểm thử giả lập cho phần của Hoàng (xem [bàn giao của Hoàng](hoang-handover.md)) và đầy đủ 3 Ingestion Extractor của Hướng (xem [bàn giao của Hướng](huong-handover.md)). Không coi tài liệu hoặc mock là bằng chứng hệ thống AWS đã chạy. Bảng giờ là phân bổ dự kiến, không phải số giờ đã làm.
