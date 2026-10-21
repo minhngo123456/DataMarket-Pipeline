@@ -18,7 +18,11 @@ from services.api.routes.catalog import handle_get_products, handle_post_catalog
 from services.api.routes.dashboard import handle_get_alerts, handle_get_dashboard_stats
 from services.api.routes.history import handle_get_history
 from services.api.routes.matrix import handle_get_matrix
-from services.api.routes.members import handle_get_members, handle_invite_member
+from services.api.routes.members import (
+    handle_get_members,
+    handle_invite_member,
+    handle_patch_member,
+)
 from services.api.routes.pending import handle_approve_pending_sku, handle_get_pending_skus
 from services.api.routes.reports import (
     handle_get_report_detail,
@@ -149,6 +153,12 @@ def route_request(event: dict, store: DynamoStore) -> dict:
     # 17. POST /members/invite
     if method == "POST" and path == "/members/invite":
         return handle_invite_member(event, store, auth)
+
+    # 18. PATCH /members/:id
+    if method == "PATCH" and re.match(r"^/members/[A-Za-z0-9_-]+$", path):
+        user_id = path.split("/members/")[1]
+        event.setdefault("pathParameters", {})["user_id"] = user_id
+        return handle_patch_member(event, store, auth)
 
     return error("not_found", f"Route {method} {path} not found", 404)
 

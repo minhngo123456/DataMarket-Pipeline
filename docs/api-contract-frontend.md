@@ -55,7 +55,7 @@ Các danh sách dạng bảng (Ma trận, Sản phẩm, Báo cáo, Nguồn) tr�
 
 ---
 
-## 2. Danh mục 17 Endpoints Chi tiết
+## 2. Danh mục 18 Endpoints Chi tiết
 
 | # | Method | Path | Mô tả | Role | Tuần cần |
 |---|---|---|---|---|:---:|
@@ -76,6 +76,7 @@ Các danh sách dạng bảng (Ma trận, Sản phẩm, Báo cáo, Nguồn) tr�
 | 15 | `GET` | `/reports/:id` | Chi tiết báo cáo + Nội dung tóm tắt từ Claude AI | All | 4 |
 | 16 | `GET` | `/members` | Danh sách thành viên trong tenant (Tối đa 5 user) | Admin | 4 |
 | 17 | `POST` | `/members/invite` | Thêm / Mời thành viên mới vào tenant | Admin | 4 |
+| 18 | `PATCH` | `/members/:id` | Cập nhật vai trò (Admin đổi role) hoặc trạng thái thành viên | Admin | 4 |
 
 ---
 
@@ -559,6 +560,49 @@ Thêm / phân quyền cho một thành viên mới vào tenant (Chặn nếu ten
 
 ---
 
+#### 18. `PATCH /members/:id`
+Cập nhật vai trò (Admin đổi role) hoặc thay đổi trạng thái kích hoạt của thành viên.
+- **Role:** Admin
+- **Path Params:** `id` (hoặc `user_id`, ví dụ `user-02`)
+- **Request Body:**
+```json
+{
+  "role": "analyst",
+  "status": "active"
+}
+```
+*Lưu ý: Có thể truyền một trong hai hoặc cả hai trường `role` ('admin', 'analyst', 'viewer') và `status` ('active', 'disabled').*
+- **Response 200:**
+```json
+{
+  "user_id": "user-02",
+  "email": "analyst@example.com",
+  "role": "analyst",
+  "status": "active",
+  "message": "Cập nhật vai trò thành viên thành công."
+}
+```
+- **Error 400 (Nếu role hoặc status không hợp lệ):**
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "role must be one of: admin, analyst, viewer"
+  }
+}
+```
+- **Error 404 (Nếu không tìm thấy thành viên):**
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Member does not exist in this tenant"
+  }
+}
+```
+
+---
+
 ## 4. Cam kết Tiến độ Triển khai của Hiếu
 
 Để Nhật Minh dễ dàng lên lịch phát triển giao diện:
@@ -570,5 +614,5 @@ Thêm / phân quyền cho một thành viên mới vào tenant (Chặn nếu ten
   - Mở các endpoint thao tác: `POST /sources`, `PATCH /sources/:id`, `DELETE /sources/:id`, `POST /jobs`, `GET /jobs/:id/status`, `GET /matrix`, `GET /products`, `PATCH /products/:id/match`.
   - Minh hoàn thiện luồng Upload CSV UI và màn hình Duyệt ghép SKU.
 - **Tuần 4 (Hoàn thành trước ngày 11/11):**
-  - Mở các endpoint phân tích & quản trị: `GET /products/:id/price-history`, `GET /reports`, `GET /reports/:id`, `GET /members`, `POST /members/invite`.
-  - Minh hoàn thiện màn hình Báo cáo AI, biểu đồ giá 30 ngày và trang Quản trị thành viên.
+  - Mở các endpoint phân tích & quản trị: `GET /products/:id/price-history`, `GET /reports`, `GET /reports/:id`, `GET /members`, `POST /members/invite`, `PATCH /members/:id`.
+  - Minh hoàn thiện màn hình Báo cáo AI, biểu đồ giá 30 ngày và trang Quản trị thành viên (gồm chức năng phân quyền/đổi role).
