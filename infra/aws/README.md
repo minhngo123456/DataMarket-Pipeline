@@ -7,7 +7,7 @@ Template: `template.yaml`, Python 3.12, AWS SAM. Hạ tầng được mô tả b
 - DynamoDB ControlTable và ObservationsTable, GSI `by_day`, TTL, mã hóa và point-in-time recovery.
 - S3 Raw/Reports/Web riêng tư, versioning, mã hóa, chặn HTTP. Raw gửi Object Created qua EventBridge vào CSVQueue; CloudFront dùng OAC đọc WebBucket.
 - CSVQueue, APIQueue, WebQueue, TransformQueue, ReportQueue, mỗi queue có DLQ riêng. Visibility timeout 300 giây, maxReceiveCount 5. CloudWatch có cảnh báo khi DLQ có message.
-- CSVWorker và Normalizer: timeout 45 giây, partial batch response, IAM giới hạn theo tài nguyên/chức năng. CSV dùng batch 1; Normalizer dùng batch 10. Source mapping giới hạn concurrency 2.
+- CSVWorker, APIWorker, WebWorker và Normalizer: timeout 45 giây, partial batch response, IAM giới hạn theo tài nguyên/chức năng. Các extractor dùng batch 1; Normalizer dùng batch 10. Source mapping giới hạn concurrency 2.
 - Job Dispatcher mỗi 6 giờ và Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. Scheduler có retry và DLQ; lịch mặc định DISABLED.
 - Cognito user pool/client, HTTP API và JWT authorizer để Hiếu gắn route. API chưa có route nghiệp vụ; Cognito hiện cho admin tạo user.
 - CloudFront/S3 Web để Minh tải giao diện. S3 CORS và API CORS dùng đúng WebOrigin, mặc định http://localhost:5173.
@@ -43,7 +43,7 @@ Chọn stack riêng cho môi trường dev, Region được nhóm chốt, capabi
 
 Thử luồng CSV: API của Hiếu tạo source và job phía máy chủ, cấp presigned PUT URL cho đúng `tenants/<tenant>/raw/<job>`, trình duyệt tải UTF-8 CSV. Kiểm tra EventBridge, CSVQueue, TransformQueue, receipt/job counts và tenant isolation. Nếu chưa có API, admin có thể seed source/job bằng AWS CLI trong sandbox; không mở route tạm bỏ qua xác thực.
 
-Hiếu bổ sung Aggregator/Notification và SNS topic/subscription, Secrets Manager references theo tenant. Hướng bổ sung consumer APIQueue/WebQueue. Các phần đó chưa nằm trong template bằng handler giả. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
+Hiếu bổ sung Aggregator/Notification và SNS topic/subscription, Secrets Manager references theo tenant. APIWorker và WebWorker hiện đã được khai báo làm consumer của APIQueue/WebQueue. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
 
 Bucket và table có DeletionPolicy Retain để tránh mất dữ liệu khi xóa stack. Khi dọn sandbox, cần kiểm tra rồi xóa riêng tài nguyên còn giữ. CloudWatch/PITR/S3 có thể phát sinh chi phí sau khi triển khai; bản local không tạo tài nguyên AWS.
 

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Group 07 - Hoang: storage, queues, dispatchers and normalizer. No API
-  business routes or AI handlers.'
+Description: 'Group 07 - storage, queues, source workers, dispatchers and normalizer.
+  No API business routes or AI handlers.'
 Parameters:
   WebOrigin:
     Type: String
@@ -377,6 +377,68 @@ Resources:
         Fn::GetAtt:
         - CSVWorkerExecutionRole
         - Arn
+  APIWorker:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.ingestion.api_worker.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          TRANSFORM_QUEUE_URL:
+            Ref: TransformQueue
+          API_QUEUE_URL:
+            Ref: APIQueue
+      Events:
+        APIJobs:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - APIQueue
+              - Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            FunctionResponseTypes:
+            - ReportBatchItemFailures
+            ScalingConfig:
+              MaximumConcurrency: 2
+      Role:
+        Fn::GetAtt:
+        - APIWorkerExecutionRole
+        - Arn
+  WebWorker:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.ingestion.web_worker.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          TRANSFORM_QUEUE_URL:
+            Ref: TransformQueue
+          WEB_QUEUE_URL:
+            Ref: WebQueue
+      Events:
+        WebJobs:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - WebQueue
+              - Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            FunctionResponseTypes:
+            - ReportBatchItemFailures
+            ScalingConfig:
+              MaximumConcurrency: 2
+      Role:
+        Fn::GetAtt:
+        - WebWorkerExecutionRole
+        - Arn
   SchedulerGroup:
     Type: AWS::Scheduler::ScheduleGroup
     Properties: {}
@@ -604,6 +666,18 @@ Resources:
     Properties:
       LogGroupName:
         Fn::Sub: /aws/lambda/${CSVWorker}
+      RetentionInDays: 7
+  APIWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${APIWorker}
+      RetentionInDays: 7
+  WebWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${WebWorker}
       RetentionInDays: 7
   JobDispatcherLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1008,6 +1082,100 @@ Resources:
             - logs:PutLogEvents
             Resource:
               Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  APIWorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: APIWorkerDataAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            Resource:
+              Fn::GetAtt:
+              - ControlTable
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - TransformQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            - sqs:ChangeMessageVisibility
+            Resource:
+              Fn::GetAtt:
+              - APIQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  WebWorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: WebWorkerDataAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            Resource:
+              Fn::GetAtt:
+              - ControlTable
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - TransformQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            - sqs:ChangeMessageVisibility
+            Resource:
+              Fn::GetAtt:
+              - WebQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
 Outputs:
   ControlTable:
     Value:
@@ -1073,6 +1241,16 @@ Outputs:
     Value:
       Fn::GetAtt:
       - CSVWorker
+      - Arn
+  APIWorkerArn:
+    Value:
+      Fn::GetAtt:
+      - APIWorker
+      - Arn
+  WebWorkerArn:
+    Value:
+      Fn::GetAtt:
+      - WebWorker
       - Arn
   JobDispatcherArn:
     Value:
