@@ -69,7 +69,7 @@ Mỗi dòng vào TransformQueue dùng JSON:
 - Không đưa `tenant_id` vào `record`. Worker lấy tenant từ metadata job, không từ CSV.
 - Bản này nhận JSON trực tiếp, tối đa 32 KiB/dòng; CSV UTF-8 tối đa 1 MiB và 1000 dòng. Chưa có nhánh đọc JSON qua tham chiếu S3. Muốn mở rộng phải bổ sung contract và kiểm thử trước.
 - `send_rows` chia lô tối đa 10 message và 240 KiB. Nếu một phần gửi lỗi, worker thử lại công việc; Normalizer bỏ qua các receipt đã có.
-- Job Dispatcher tạo job API/web từ nguồn đang bật mỗi kỳ 6 giờ. API/HTML worker do Hướng viết, chưa có consumer cho APIQueue/WebQueue trong template này.
+- Job Dispatcher tạo job API/web từ nguồn đang bật mỗi kỳ 6 giờ. API/HTML worker do Hướng viết và hiện được nối vào APIQueue/WebQueue trong template. Template vẫn chưa được deploy lên AWS thật.
 
 ## Bàn giao cho Hiếu và Minh
 

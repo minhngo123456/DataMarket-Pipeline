@@ -12,6 +12,8 @@ import boto3
 from marketdata.contracts import AccessDenied, InvalidRecord, identifier
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
+from services.ingestion.batch import process_source_batch
+from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -25,17 +27,18 @@ HEADER_MAPPING = {
     "source_sku": "source_sku",
     "product_sku": "source_sku",
     "item_sku": "source_sku",
-    "mã sku": "source_sku",
+    "mã_sku": "source_sku",
+    "product_code": "source_sku",
     "price": "price",
     "giá": "price",
     "don_gia": "price",
     "unit_price": "price",
     "currency": "currency",
-    "tiền tệ": "currency",
+    "tiền_tệ": "currency",
     "tien_te": "currency",
-    "đơn vị": "currency",
+    "đơn_vị": "currency",
     "observed_at": "observed_at",
-    "thời điểm": "observed_at",
+    "thời_điểm": "observed_at",
     "thoi_diem": "observed_at",
     "date": "observed_at",
     "timestamp": "observed_at",
@@ -50,7 +53,6 @@ class HTMLTablePriceParser(HTMLParser):
         self._in_table = False
         self._in_row = False
         self._in_cell = False
-        self._is_header_cell = False
         self._headers = []
         self._current_row_cells = []
         self._current_cell_text = []
@@ -77,7 +79,6 @@ class HTMLTablePriceParser(HTMLParser):
             self._current_row_cells = []
         elif tag in ("th", "td") and self._in_row:
             self._in_cell = True
-            self._is_header_cell = (tag == "th")
             self._current_cell_text = []
 
     def handle_data(self, data):
@@ -91,14 +92,14 @@ class HTMLTablePriceParser(HTMLParser):
             self._in_cell = False
         elif tag == "tr" and self._in_row:
             self._in_row = False
-            if not self._headers and any(
-                c.lower() in HEADER_MAPPING for c in self._current_row_cells
-            ):
+            normalized_headers = [
+                c.casefold().strip().replace("-", "_").replace(" ", "_")
+                for c in self._current_row_cells
+            ]
+            mapped_headers = [HEADER_MAPPING.get(c, c) for c in normalized_headers]
+            if not self._headers and REQUIRED <= set(mapped_headers):
                 # Header row
-                self._headers = [
-                    HEADER_MAPPING.get(c.lower().replace("-", "_").replace(" ", "_"), c.lower())
-                    for c in self._current_row_cells
-                ]
+                self._headers = mapped_headers
             elif self._headers and len(self._current_row_cells) == len(self._headers):
                 row = dict(zip(self._headers, self._current_row_cells, strict=False))
                 self.rows.append(row)
@@ -115,13 +116,11 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
                 raise InvalidRecord("html_response_exceeds_1_mib")
             return data
     except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            raise InvalidRecord("web_rate_limited_429") from exc
-        if exc.code in (401, 403):
-            raise AccessDenied(f"web_access_denied_{exc.code}") from exc
-        raise InvalidRecord(f"web_http_error_{exc.code}") from exc
+        raise http_error_to_exception(exc, "web") from exc
     except urllib.error.URLError as exc:
-        raise InvalidRecord(f"web_connection_error_{exc.reason}") from exc
+        raise RetryableFetchError(f"web_connection_error_{exc.reason}") from exc
+    except (TimeoutError, ConnectionError, OSError) as exc:
+        raise RetryableFetchError(f"web_connection_error_{exc}") from exc
 
 
 def parse_html_payload(data):
@@ -158,6 +157,8 @@ def parse_html_payload(data):
             "currency": str(row["currency"]).strip().upper(),
             "observed_at": str(row["observed_at"]).strip(),
         }
+        if any(not value for value in cleaned.values()):
+            raise InvalidRecord("empty_required_html_field")
         if "price_basis" in row:
             cleaned["price_basis"] = str(row["price_basis"]).strip()
         validated_rows.append(cleaned)
@@ -180,14 +181,17 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     job = store.get(tenant_id, "JOB#" + job_id)
     if not job:
         raise AccessDenied("job_not_found")
-    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
-    if job.get("kind") != "web":
+    if job.get("source_id") != source_id or job.get("kind") != "web":
         raise AccessDenied("web_job_required")
 
     source = store.get(tenant_id, "SOURCE#" + source_id)
-    if not source or not source.get("enabled"):
-        store.update_job(tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0)
+    if not source or source.get("kind") != "web" or not source.get("enabled"):
+        store.tenant(tenant_id)
+        store.update_job(
+            tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0
+        )
         return
+    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
 
     url = source.get("url") or source.get("endpoint")
     if not url:
@@ -197,11 +201,15 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     try:
         raw_data = fetch(url, headers=source.get("headers"))
         rows = parse_html_payload(raw_data)
+    except RetryableFetchError:
+        raise
     except (InvalidRecord, AccessDenied) as exc:
         store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
         return
     except Exception as exc:
-        store.update_job(tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0)
+        store.update_job(
+            tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0
+        )
         return
 
     values = [
@@ -227,16 +235,17 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     send_rows(sqs, transform_queue, values)
 
 
-def process_batch(event, store, sqs, queue, fetcher=None):
-    failures = []
-    for message in event["Records"]:
-        try:
-            body = json.loads(message["body"])
-            process_event(body, store, sqs, queue, fetcher=fetcher)
-        except Exception:
-            logger.error("web_failed message_id=%s", message["messageId"], exc_info=True)
-            failures.append({"itemIdentifier": message["messageId"]})
-    return {"batchItemFailures": failures}
+def process_batch(event, store, sqs, queue, fetcher=None, input_queue_url=None):
+    return process_source_batch(
+        event,
+        store,
+        sqs,
+        queue,
+        input_queue_url,
+        "web",
+        process_event,
+        fetcher=fetcher,
+    )
 
 
 def handler(event, context):
@@ -245,4 +254,5 @@ def handler(event, context):
         DynamoStore(),
         boto3.client("sqs"),
         os.environ["TRANSFORM_QUEUE_URL"],
+        input_queue_url=os.environ["WEB_QUEUE_URL"],
     )

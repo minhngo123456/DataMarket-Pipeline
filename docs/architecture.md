@@ -54,4 +54,4 @@ Theo báo cáo đã nộp, Vũ Minh Hoàng phụ trách chính hạ tầng AWS/I
 
 ## Phần đã có ở bản local
 
-Python workers, repository và SAM template của Hoàng đã được viết; xem [bàn giao](hoang-handover.md). Template chưa được deploy; chưa có route nghiệp vụ, API/HTML worker hay Aggregator/Notification. Phân biệt trạng thái code local với kiến trúc dự kiến của toàn hệ thống.
+Python workers, repository và SAM template của Hoàng đã được viết; API/HTML source workers của Hướng đã được nối vào APIQueue/WebQueue trong template. Template chưa được deploy; chưa có route nghiệp vụ hoặc Aggregator/Notification. Phân biệt trạng thái code local với kiến trúc dự kiến của toàn hệ thống.

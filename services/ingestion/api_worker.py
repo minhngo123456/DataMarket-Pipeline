@@ -11,6 +11,8 @@ import boto3
 from marketdata.contracts import AccessDenied, InvalidRecord, identifier
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
+from services.ingestion.batch import process_source_batch
+from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -29,13 +31,11 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
                 raise InvalidRecord("api_response_exceeds_1_mib")
             return data
     except urllib.error.HTTPError as exc:
-        if exc.code == 429:
-            raise InvalidRecord("api_rate_limited_429") from exc
-        if exc.code in (401, 403):
-            raise AccessDenied(f"api_access_denied_{exc.code}") from exc
-        raise InvalidRecord(f"api_http_error_{exc.code}") from exc
+        raise http_error_to_exception(exc, "api") from exc
     except urllib.error.URLError as exc:
-        raise InvalidRecord(f"api_connection_error_{exc.reason}") from exc
+        raise RetryableFetchError(f"api_connection_error_{exc.reason}") from exc
+    except (TimeoutError, ConnectionError, OSError) as exc:
+        raise RetryableFetchError(f"api_connection_error_{exc}") from exc
 
 
 def parse_api_payload(data):
@@ -72,6 +72,8 @@ def parse_api_payload(data):
             raise InvalidRecord("missing_required_api_fields")
         if "tenant_id" in item:
             raise InvalidRecord("tenant_not_allowed_in_record")
+        if any(item[field] is None or not str(item[field]).strip() for field in REQUIRED):
+            raise InvalidRecord("empty_required_api_field")
 
         # Clean string representations
         row = {
@@ -102,28 +104,37 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     job = store.get(tenant_id, "JOB#" + job_id)
     if not job:
         raise AccessDenied("job_not_found")
-    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
-    if job.get("kind") != "api":
+    if job.get("source_id") != source_id or job.get("kind") != "api":
         raise AccessDenied("api_job_required")
 
     source = store.get(tenant_id, "SOURCE#" + source_id)
-    if not source or not source.get("enabled"):
-        store.update_job(tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0)
+    if not source or source.get("kind") != "api" or not source.get("enabled"):
+        store.tenant(tenant_id)
+        store.update_job(
+            tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0
+        )
         return
+    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
 
     endpoint = source.get("endpoint") or source.get("url")
     if not endpoint:
-        store.update_job(tenant_id, job_id, status="failed", error="missing_api_endpoint", row_count=0)
+        store.update_job(
+            tenant_id, job_id, status="failed", error="missing_api_endpoint", row_count=0
+        )
         return
 
     try:
         raw_data = fetch(endpoint, headers=source.get("headers"))
         rows = parse_api_payload(raw_data)
+    except RetryableFetchError:
+        raise
     except (InvalidRecord, AccessDenied) as exc:
         store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
         return
     except Exception as exc:
-        store.update_job(tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0)
+        store.update_job(
+            tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0
+        )
         return
 
     values = [
@@ -149,16 +160,17 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     send_rows(sqs, transform_queue, values)
 
 
-def process_batch(event, store, sqs, queue, fetcher=None):
-    failures = []
-    for message in event["Records"]:
-        try:
-            body = json.loads(message["body"])
-            process_event(body, store, sqs, queue, fetcher=fetcher)
-        except Exception:
-            logger.error("api_failed message_id=%s", message["messageId"], exc_info=True)
-            failures.append({"itemIdentifier": message["messageId"]})
-    return {"batchItemFailures": failures}
+def process_batch(event, store, sqs, queue, fetcher=None, input_queue_url=None):
+    return process_source_batch(
+        event,
+        store,
+        sqs,
+        queue,
+        input_queue_url,
+        "api",
+        process_event,
+        fetcher=fetcher,
+    )
 
 
 def handler(event, context):
@@ -167,4 +179,5 @@ def handler(event, context):
         DynamoStore(),
         boto3.client("sqs"),
         os.environ["TRANSFORM_QUEUE_URL"],
+        input_queue_url=os.environ["API_QUEUE_URL"],
     )
