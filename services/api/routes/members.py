@@ -1,4 +1,4 @@
-"""Handler for /members and /members/invite endpoints."""
+"""Handler for /members endpoints."""
 
 import json
 
@@ -87,3 +87,65 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext) -> 
         },
         status_code=201,
     )
+
+
+def handle_patch_member(event: dict, store: DynamoStore, auth: AuthContext) -> dict:
+    """Update role or status for an existing tenant member (Admin only)."""
+    if auth.role != "admin":
+        raise AccessDenied("admin_role_required")
+
+    path_params = event.get("pathParameters") or {}
+    user_id = path_params.get("user_id") or path_params.get("id")
+    if not user_id:
+        return error("missing_user_id", "user_id is required", 400)
+
+    user_id = identifier(user_id)
+    store.tenant(auth.tenant_id)
+
+    member_rec = store.get(auth.tenant_id, "MEMBER#" + user_id)
+    if not member_rec:
+        return error("member_not_found", "Member does not exist in this tenant", 404)
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return error("invalid_json", "Request body must be valid JSON", 400)
+
+    new_role = body.get("role")
+    new_status = body.get("status")
+
+    if not new_role and not new_status:
+        return error("missing_update_fields", "At least 'role' or 'status' must be provided", 400)
+
+    if new_role and new_role not in ("admin", "analyst", "viewer"):
+        return error("invalid_role", "role must be one of: admin, analyst, viewer", 400)
+
+    if new_status and new_status not in ("active", "disabled"):
+        return error("invalid_status", "status must be one of: active, disabled", 400)
+
+    updated_rec = {
+        **member_rec,
+        "role": new_role if new_role else member_rec.get("role", "viewer"),
+        "status": new_status if new_status else member_rec.get("status", "active"),
+    }
+
+    # Update tenant-side record
+    store.put(auth.tenant_id, "MEMBER#" + user_id, updated_rec)
+
+    # If status changed, also update user membership in ControlTable for immediate revocation
+    if new_status:
+        user_membership = store.control.get_item(
+            Key={"pk": "U#" + user_id, "sk": "MEMBERSHIP"}
+        ).get("Item")
+        if user_membership:
+            store.control.put_item(
+                Item={**user_membership, "status": new_status}
+            )
+
+    return ok({
+        "user_id": user_id,
+        "email": updated_rec.get("email"),
+        "role": updated_rec["role"],
+        "status": updated_rec["status"],
+        "message": "Cập nhật vai trò thành viên thành công.",
+    })

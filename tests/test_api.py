@@ -231,3 +231,52 @@ def test_cross_tenant_isolation(store):
     data = json.loads(resp["body"])
     product_ids = [p["product_id"] for p in data["products"]]
     assert "secret-a" not in product_ids
+
+
+def test_patch_member_role_and_status(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+    add_user(store, "viewer-target", "tenant-a", "viewer")
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+
+    # Non-admin cannot update role
+    forbidden_resp = handler(
+        make_event("PATCH", "/members/viewer-target", user_id="analyst-a", body={"role": "analyst"}),
+        store=store,
+    )
+    assert forbidden_resp["statusCode"] == 403
+
+    # Admin changes role to analyst
+    success_resp = handler(
+        make_event("PATCH", "/members/viewer-target", user_id="admin-a", body={"role": "analyst"}),
+        store=store,
+    )
+    assert success_resp["statusCode"] == 200
+    data = json.loads(success_resp["body"])
+    assert data["role"] == "analyst"
+    assert data["user_id"] == "viewer-target"
+
+    # Verify role updated in DynamoDB
+    member_rec = store.get("tenant-a", "MEMBER#viewer-target")
+    assert member_rec["role"] == "analyst"
+
+    # Admin disables member
+    disable_resp = handler(
+        make_event("PATCH", "/members/viewer-target", user_id="admin-a", body={"status": "disabled"}),
+        store=store,
+    )
+    assert disable_resp["statusCode"] == 200
+    assert json.loads(disable_resp["body"])["status"] == "disabled"
+
+    # Invalid role returns 400
+    bad_role_resp = handler(
+        make_event("PATCH", "/members/viewer-target", user_id="admin-a", body={"role": "superadmin"}),
+        store=store,
+    )
+    assert bad_role_resp["statusCode"] == 400
+
+    # Non-existent member returns 404
+    not_found_resp = handler(
+        make_event("PATCH", "/members/non-existent", user_id="admin-a", body={"role": "viewer"}),
+        store=store,
+    )
+    assert not_found_resp["statusCode"] == 404
