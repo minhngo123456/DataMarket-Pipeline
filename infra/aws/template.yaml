@@ -13,6 +13,18 @@ Parameters:
     AllowedValues:
     - DISABLED
     - ENABLED
+  EnableCloudFront:
+    Type: String
+    Default: DISABLED
+    AllowedValues:
+    - DISABLED
+    - ENABLED
+    Description: Enable CloudFront distribution. Disabled by default while awaiting AWS account verification.
+Conditions:
+  UseCloudFront:
+    Fn::Equals:
+    - Ref: EnableCloudFront
+    - ENABLED
 Globals:
   Function:
     Runtime: python3.12
@@ -747,6 +759,8 @@ Resources:
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-http-api
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
@@ -783,6 +797,7 @@ Resources:
           Fn::Sub: https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
   WebOAC:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCloudFront
     Properties:
       OriginAccessControlConfig:
         Name:
@@ -792,6 +807,7 @@ Resources:
         SigningProtocol: sigv4
   WebDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: UseCloudFront
     Properties:
       DistributionConfig:
         Enabled: true
@@ -825,6 +841,7 @@ Resources:
           CloudFrontDefaultCertificate: true
   WebBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
     Properties:
       Bucket:
         Ref: WebBucket
@@ -1102,6 +1119,7 @@ Outputs:
     Value:
       Ref: JWTAuthorizer
   WebUrl:
+    Condition: UseCloudFront
     Value:
       Fn::Sub: https://${WebDistribution.DomainName}
   ApiDataPolicyArn:
