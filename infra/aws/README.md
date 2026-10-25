@@ -1,5 +1,7 @@
 # Hạ tầng AWS của Hoàng
 
+[Hướng dẫn từng bước trên tài khoản cá nhân Free plan](../../docs/aws-deploy-free-plan.md).
+
 Template: `template.yaml`, Python 3.12, AWS SAM. Hạ tầng được mô tả bằng code, chưa deploy vào tài khoản AWS.
 
 ## Có trong template
@@ -39,7 +41,7 @@ sam build --template-file infra/aws/template.yaml
 sam deploy --guided
 ```
 
-Chọn stack riêng cho môi trường dev, Region được nhóm chốt, capability CAPABILITY_IAM, WebOrigin đúng địa chỉ web, ScheduleState=DISABLED. Chỉ bật lịch sau khi Hướng nối API/HTML consumer và Hiếu nối Aggregator. Dùng outputs để bàn giao tên bucket/table, URL/ARN queue, Cognito, authorizer và các hàm; không chép credentials vào repo.
+Chọn stack riêng cho môi trường dev, Region được nhóm chốt, capability CAPABILITY_IAM, WebOrigin đúng địa chỉ web, ScheduleState=DISABLED, EnableCloudFront=DISABLED (mặc định tắt chờ duyệt tài khoản). Chỉ bật lịch sau khi Hướng nối API/HTML consumer và Hiếu nối Aggregator. Dùng outputs để bàn giao tên bucket/table, URL/ARN queue, Cognito, authorizer và các hàm; không chép credentials vào repo.
 
 Thử luồng CSV: API của Hiếu tạo source và job phía máy chủ, cấp presigned PUT URL cho đúng `tenants/<tenant>/raw/<job>`, trình duyệt tải UTF-8 CSV. Kiểm tra EventBridge, CSVQueue, TransformQueue, receipt/job counts và tenant isolation. Nếu chưa có API, admin có thể seed source/job bằng AWS CLI trong sandbox; không mở route tạm bỏ qua xác thực.
 

@@ -29,3 +29,12 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+# Local test outputs and artifacts
+stack-resources-*.json
+*.tmp
+
+# AI tools and local agent runtimes
+*gemini*
+.claude/
+.agents/
+.codex/
