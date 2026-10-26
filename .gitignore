@@ -29,3 +29,6 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+
+# Personal dev guides
+GUIDE_*.md
