@@ -1,60 +1,47 @@
 # MarketData Pipeline Web
 
-React + Vite browser app. Steps 5 and 6 provide the frontend scaffold and
-Cognito sign-in. Step 7 adds the API client and current application user.
+React + Vite app for the MarketData Pipeline. Sign-in uses Amplify Authenticator
+against Cognito; every page calls the HTTP API described in
+`docs/api-contract-frontend.md`.
 
-## Local configuration
+## Run locally
 
-Copy `.env.example` to `.env.local` and set the Cognito User Pool ID and App
-client ID. `.env.local` is ignored by Git.
+Requires Node 18+ and pnpm.
 
-`VITE_API_URL` defaults to `http://localhost:3001/v1`. While the backend is not
-available, `VITE_ENABLE_MOCK_USER=true` lets the local preview display a clearly
-marked sample profile. Set it to `false` when the real `/me` endpoint is ready.
-
-## Step 7 API contract
-
-`src/services/api.js` attaches the signed-in user's Cognito ID token to requests
-as `Authorization: Bearer <token>`. `src/services/marketDataApi.js` wraps the 18
-routes in Hiếu's `docs/api-contract-frontend.md` contract. `src/hooks/useUser.js`
-calls `GET /me` and expects the response body to contain:
-
-```json
-{
-  "user_id": "u-123",
-  "tenant_id": "t-123",
-  "role": "analyst",
-  "tenant": { "name": "Example shop", "product_count": 42, "max_skus": 100 },
-  "claims": { "email": "analyst@example.com" }
-}
+```bash
+cd apps/web
+pnpm install
+cp .env.example .env.local   # fill in Cognito and API values
+pnpm dev                     # http://localhost:5173
+pnpm test                    # vitest
+pnpm build
 ```
 
-The backend must validate the Cognito token and return the application user's
-tenant and role. No backend API is included in this workspace yet, so the
-current profile shown in local preview is sample data.
+| Variable | Meaning |
+| --- | --- |
+| `VITE_API_URL` | `HttpApiEndpoint` output of the SAM stack. The stage is `$default`, so no `/v1` suffix. |
+| `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID` | `UserPoolId` and `UserPoolClientId` outputs. |
+| `VITE_ENABLE_MOCK_DATA` | `true` shows labelled sample data when the API cannot be reached. Always on under `pnpm dev`; keep `false` for deployed builds. |
+| `VITE_MOCK_ROLE` | Role of the sample profile (`admin`, `analyst`, `viewer`) to test permissions locally. |
 
-The API implementation and its AWS SAM infrastructure are on the remote branch
-`feature/hieu-auth-api-ai-report`; they are not deployed by this frontend.
+Self sign-up is hidden: the user pool only allows admins to create accounts.
 
-## Step 8 routes and permissions
+## Pages
 
-The signed-in workspace now has a shared sidebar and routes for `/dashboard`,
-`/sources`, `/upload`, `/catalog`, `/reports`, `/reports/:id`, and `/members`.
-All roles can open the dashboard, sources, and reports. `admin` and `analyst`
-can also open upload and catalog; only `admin` can open members. Direct URL
-navigation uses the same role guard as the sidebar, and unknown routes return to
-`/dashboard`.
-
-The page layouts follow the supplied Figma overview. Values on the dashboard and
-feature tables are presentation samples; actions that need backend writes are
-labelled as pending API integration. Step 9 can move these samples into shared
-fixtures and connect page data to the API contract.
+| Route | Roles | Content |
+| --- | --- | --- |
+| `/dashboard` | all | KPI cards, 24-hour price matrix by source (min/max highlight, stale label, ≥15% anomaly filter), 30-day price history chart, source status, alerts |
+| `/sources` | all (edit: admin, analyst; delete: admin) | Source list, add, enable/disable, delete; Pilot limit of 3 |
+| `/upload` | admin, analyst | CSV only, max 10 MB, preview with papaparse, `POST /jobs` then PUT to the presigned S3 URL, job status polling |
+| `/catalog` | admin, analyst | Pending / confirmed / rejected SKUs; approve into a catalog product or reject |
+| `/reports`, `/reports/:id` | all | Daily AI reports rendered from markdown; warning when the AI step failed |
+| `/members` | admin | Members, invite, change role, disable |
 
 ## Source structure
 
-- `src/components/` shared UI components
-- `src/hooks/` React hooks such as `useUser`
-- `src/pages/` feature pages
-- `src/services/` API clients
-- `src/utils/` formatting and date helpers
-- `src/mocks/` development fixtures
+- `src/components/` layout, sidebar, role guard, page heading
+- `src/hooks/` `useUser` (`GET /me`) and `useApiData` (loading, errors, sample fallback)
+- `src/pages/` one folder per feature
+- `src/services/` axios client with the Cognito ID token, and one method per API route
+- `src/utils/` VND and time formatting (Asia/Ho_Chi_Minh), matrix pivot
+- `src/mocks/` sample data in the same shape as the API responses

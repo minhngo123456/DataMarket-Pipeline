@@ -280,3 +280,88 @@ def test_patch_member_role_and_status(store):
         store=store,
     )
     assert not_found_resp["statusCode"] == 404
+
+
+def _pending_observation(store, message):
+    from marketdata.service import ingest
+    from tests.conftest import NOW
+
+    message["record"]["source_sku"] = "UNKNOWN-SKU"
+    return ingest(message, store, NOW)["observation_id"]
+
+
+def test_reject_pending_sku_does_not_map_it(store, message):
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+    observation_id = _pending_observation(store, message)
+
+    resp = handler(
+        make_event(
+            "PATCH",
+            "/products/phone/match",
+            user_id="analyst-a",
+            body={"observation_id": observation_id, "action": "reject"},
+        ),
+        store=store,
+    )
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["status"] == "rejected"
+
+    receipt = store.receipt("tenant-a", observation_id)
+    assert receipt["status"] == "rejected"
+    assert "product_id" not in receipt or receipt["product_id"] is None
+    assert store.mapping("tenant-a", "vendor", "UNKNOWN-SKU") is None
+
+    # A rejected row cannot be approved afterwards.
+    approve = handler(
+        make_event(
+            "PATCH",
+            "/products/phone/match",
+            user_id="analyst-a",
+            body={"observation_id": observation_id, "action": "approve"},
+        ),
+        store=store,
+    )
+    assert approve["statusCode"] == 409
+
+
+def test_match_rejects_unknown_action_and_viewer(store, message):
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+    add_user(store, "viewer-a", "tenant-a", "viewer")
+    observation_id = _pending_observation(store, message)
+
+    bad = handler(
+        make_event(
+            "PATCH",
+            "/products/phone/match",
+            user_id="analyst-a",
+            body={"observation_id": observation_id, "action": "delete"},
+        ),
+        store=store,
+    )
+    assert bad["statusCode"] == 400
+
+    viewer = handler(
+        make_event(
+            "PATCH",
+            "/products/phone/match",
+            user_id="viewer-a",
+            body={"observation_id": observation_id, "action": "reject"},
+        ),
+        store=store,
+    )
+    assert viewer["statusCode"] == 403
+    assert store.receipt("tenant-a", observation_id)["status"] == "pending"
+
+
+def test_header_fallback_auth_is_off_unless_enabled(store, monkeypatch):
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+    event = {
+        "rawPath": "/me",
+        "requestContext": {"http": {"method": "GET"}},
+        "headers": {"authorization": "Bearer analyst-a"},
+    }
+    monkeypatch.delenv("ALLOW_TEST_AUTH", raising=False)
+    assert handler(event, store=store)["statusCode"] == 403
+
+    monkeypatch.setenv("ALLOW_TEST_AUTH", "true")
+    assert handler(event, store=store)["statusCode"] == 200

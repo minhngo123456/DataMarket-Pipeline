@@ -9,7 +9,7 @@ Template: `template.yaml`, Python 3.12, AWS SAM. Hạ tầng được mô tả b
 - CSVQueue, APIQueue, WebQueue, TransformQueue, ReportQueue, mỗi queue có DLQ riêng. Visibility timeout 300 giây, maxReceiveCount 5. CloudWatch có cảnh báo khi DLQ có message.
 - CSVWorker, APIWorker, WebWorker và Normalizer: timeout 45 giây, partial batch response, IAM giới hạn theo tài nguyên/chức năng. Các extractor dùng batch 1; Normalizer dùng batch 10. Source mapping giới hạn concurrency 2.
 - Job Dispatcher mỗi 6 giờ và Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. Scheduler có retry và DLQ; lịch mặc định DISABLED.
-- Cognito user pool/client, HTTP API và JWT authorizer để Hiếu gắn route. API chưa có route nghiệp vụ; Cognito hiện cho admin tạo user.
+- Cognito user pool/client, HTTP API và JWT authorizer. `ApiFunction` (`services.api.app.handler`) đã được gắn vào 21 route của `docs/api-contract-frontend.md`, mọi route đều qua JWT authorizer; frontend đặt `VITE_API_URL` bằng output `HttpApiEndpoint` (stage `$default`, không có `/v1`). Cognito hiện chỉ cho admin tạo user.
 - CloudFront/S3 Web để Minh tải giao diện. S3 CORS và API CORS dùng đúng WebOrigin, mặc định http://localhost:5173.
 
 `ApiDataPolicyArn` là policy dữ liệu bàn giao cho Hiếu. Hạ tầng dùng chung nhiều tenant; policy giới hạn tài nguyên nhưng không tự cách ly dữ liệu theo người đăng nhập. Handler API phải kiểm tra JWT/membership/RBAC, worker đối chiếu source/job.

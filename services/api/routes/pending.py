@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 
-from marketdata.access import approve_pending
+from marketdata.access import approve_pending, reject_pending
 from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
@@ -48,14 +48,31 @@ def handle_approve_pending_sku(event: dict, store: DynamoStore, auth: AuthContex
     except json.JSONDecodeError:
         return error("invalid_json", "Request body must be valid JSON", 400)
 
-    observation_id = body.get("observation_id") or path_params.get("id")
+    observation_id = body.get("observation_id")
     product_id = body.get("product_id") or path_params.get("id") or path_params.get("product_id")
     action = body.get("action", "approve")
+    now = datetime.now(UTC)
 
-    if not observation_id or not product_id:
+    if action not in ("approve", "reject"):
+        return error("invalid_request", "action must be one of: approve, reject", 400)
+    if not observation_id:
+        return error("missing_required_fields", "observation_id is required", 400)
+
+    if action == "reject":
+        reject_pending(store, auth.user_id, observation_id, now=now)
+        return ok({
+            "observation_id": observation_id,
+            "product_id": None,
+            "status": "rejected",
+            "action": action,
+            "message": "Đã từ chối ghép SKU.",
+            "tenant_id": auth.tenant_id,
+            "reviewed_at": now.isoformat(),
+        })
+
+    if not product_id:
         return error("missing_required_fields", "observation_id and product_id are required", 400)
 
-    now = datetime.now(UTC)
     approve_pending(store, auth.user_id, observation_id, product_id, now=now)
 
     return ok({

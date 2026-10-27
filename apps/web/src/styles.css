@@ -1464,3 +1464,29 @@ a {
     flex-direction: column;
   }
 }
+
+/* Price matrix, catalog review and data states */
+.page-alert { margin-bottom: 16px; }
+.center-block { display: flex; justify-content: center; padding: 48px 0; }
+.load-error { display: flex; gap: 12px; align-items: center; padding: 16px; border-radius: 8px; background: #fff1f0; color: #a8071a; }
+.load-error .text-link { background: none; border: 0; cursor: pointer; padding: 0; }
+.empty-note, .muted { color: #8c8c8c; }
+.alert-item { margin-bottom: 8px; }
+.switch-label { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; }
+.toolbar-search { max-width: 320px; }
+.inline-tag { margin-left: 6px; }
+.clickable-row { cursor: pointer; }
+.price-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border-radius: 6px; }
+.price-cell strong { font-size: 14px; }
+.price-cell .ant-tag { margin-inline-end: 0; font-size: 11px; }
+.price-cell-empty { color: #bfbfbf; }
+.price-cell-min { background: #f6ffed; }
+.price-cell-max { background: #fff7e6; }
+.matrix-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; font-size: 12px; color: #595959; align-items: center; }
+.legend-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; border: 1px solid #d9d9d9; margin-right: 4px; }
+.csv-preview { margin-top: 16px; display: grid; gap: 8px; }
+.report-body { margin-top: 16px; }
+.source-status-list { list-style: none; margin: 0; padding: 0; }
+.source-status-list li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+.source-status-list li:last-child { border-bottom: 0; }
+.table-panel + .dashboard-middle { margin-top: 16px; }

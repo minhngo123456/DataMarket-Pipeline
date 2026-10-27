@@ -23,7 +23,8 @@ export default function App() {
 
   return (
     <div className="auth-shell">
-      <Authenticator loginMechanisms={['email']} signUpAttributes={['email']}>
+      {/* Accounts are created by an admin (Cognito AllowAdminCreateUserOnly), so self sign-up is hidden. */}
+      <Authenticator loginMechanisms={['email']} hideSignUp>
         {({ user, signOut }) => (
           <BrowserRouter>
             <AppRoutes cognitoUser={user} signOut={signOut} />
