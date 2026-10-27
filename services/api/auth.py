@@ -4,6 +4,7 @@ Connects AWS Cognito JWT Authorizer claims to the multi-tenant membership
 and role-based access control (RBAC) enforced in DynamoDB ControlTable.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -39,7 +40,10 @@ def extract_claims(event: dict) -> dict:
     if "claims" in authorizer and isinstance(authorizer["claims"], dict):
         return authorizer["claims"]
 
-    # 3. Test/Dev header fallback (e.g. for offline test invocation)
+    # 3. Test/Dev header fallback (e.g. for offline test invocation). Never enabled in AWS:
+    # without this guard a caller could send a raw user id as the bearer token.
+    if os.environ.get("ALLOW_TEST_AUTH") != "true":
+        return {}
     headers = event.get("headers") or {}
     test_sub = headers.get("x-test-sub") or headers.get("X-Test-Sub")
     if test_sub:

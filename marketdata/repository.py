@@ -267,6 +267,29 @@ class DynamoStore:
         except self.client.exceptions.TransactionCanceledException as exc:
             raise Conflict("pending_row_changed") from exc
 
+    def reject_pending(self, tenant_id, observation_id, now=None):
+        pending = self.receipt(tenant_id, observation_id)
+        if not pending:
+            raise AccessDenied("pending_row_unavailable")
+        if pending["status"] == "rejected":
+            return
+        if pending["status"] != "pending":
+            raise Conflict("row_is_not_pending")
+        try:
+            self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "RECEIPT#" + identifier(observation_id)},
+                UpdateExpression="SET #status = :rejected, reviewed_at = :now",
+                ConditionExpression="#status = :pending",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":rejected": "rejected",
+                    ":pending": "pending",
+                    ":now": iso(now or datetime.now(UTC)),
+                },
+            )
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException as exc:
+            raise Conflict("pending_row_changed") from exc
+
     def receipts(self, tenant_id, job_id=None, status=None):
         self.tenant(tenant_id)
         result = self.pages(

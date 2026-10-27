@@ -1,0 +1,114 @@
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tag, message } from 'antd';
+import { useState } from 'react';
+import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
+import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
+import { mockSources } from '../../mocks/data.js';
+import { marketDataApi } from '../../services/marketDataApi.js';
+import { formatDateTime, timeAgo } from '../../utils/timeHelpers.js';
+
+const KINDS = [
+  { value: 'csv', label: 'CSV (tải tệp lên)' },
+  { value: 'api', label: 'REST API' },
+  { value: 'web', label: 'Trang web tĩnh' },
+];
+const MAX_SOURCES = 3;
+
+export function SourceListPage({ user }) {
+  const sources = useApiData(() => marketDataApi.getSources(), mockSources);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm();
+  const role = user?.role;
+  const canEdit = role === 'admin' || role === 'analyst';
+  const rows = sources.data?.data || [];
+  const limit = Math.min(user?.tenant?.max_sources ?? MAX_SOURCES, MAX_SOURCES);
+
+  const run = async (action, mockUpdate, success) => {
+    try {
+      if (!sources.isMock) await action();
+      sources.setData((data) => ({ ...data, data: mockUpdate(data.data) }));
+      message.success(success);
+      return true;
+    } catch (error) {
+      message.error(apiErrorMessage(error, 'Không lưu được nguồn.'));
+      return false;
+    }
+  };
+
+  const toggle = (source, enabled) => run(
+    () => marketDataApi.updateSource(source.source_id, { enabled }),
+    (list) => list.map((s) => (s.source_id === source.source_id ? { ...s, enabled, updated_at: new Date().toISOString() } : s)),
+    enabled ? `Đã bật ${source.name}.` : `Đã tắt ${source.name}.`,
+  );
+
+  const remove = (source) => run(
+    () => marketDataApi.deleteSource(source.source_id),
+    (list) => list.filter((s) => s.source_id !== source.source_id),
+    `Đã xóa ${source.name}.`,
+  );
+
+  const create = async () => {
+    const values = await form.validateFields();
+    setSaving(true);
+    const payload = { ...values, enabled: true };
+    const ok = await run(
+      () => marketDataApi.createSource(payload),
+      (list) => [...list, { ...payload, updated_at: new Date().toISOString() }],
+      `Đã thêm ${values.name}.`,
+    );
+    setSaving(false);
+    if (ok) {
+      setOpen(false);
+      form.resetFields();
+    }
+  };
+
+  const columns = [
+    { title: 'NGUỒN', dataIndex: 'name', key: 'name', render: (name, row) => <div className="table-primary"><strong>{name}</strong><span>{row.source_id}</span></div> },
+    { title: 'LOẠI', dataIndex: 'kind', key: 'kind', render: (kind) => <Tag>{String(kind).toUpperCase()}</Tag> },
+    { title: 'CẬP NHẬT', dataIndex: 'updated_at', key: 'updated_at', render: (v) => <span title={formatDateTime(v)}>{timeAgo(v)}</span> },
+    {
+      title: 'BẬT',
+      dataIndex: 'enabled',
+      key: 'enabled',
+      render: (enabled, row) => (canEdit
+        ? <Switch checked={enabled !== false} onChange={(value) => toggle(row, value)} aria-label={`Bật/tắt ${row.name}`} />
+        : <Tag color={enabled !== false ? 'green' : 'default'}>{enabled !== false ? 'Đang bật' : 'Đã tắt'}</Tag>),
+    },
+    ...(role === 'admin' ? [{
+      title: '',
+      key: 'delete',
+      render: (_, row) => (
+        <Popconfirm title={`Xóa nguồn ${row.name}?`} description="Cấu hình nguồn bị xóa, dữ liệu giá đã lưu vẫn giữ." okText="Xóa" cancelText="Hủy" okButtonProps={{ danger: true }} onConfirm={() => remove(row)}>
+          <Button type="text" danger icon={<DeleteOutlined />} aria-label={`Xóa ${row.name}`} />
+        </Popconfirm>
+      ),
+    }] : []),
+  ];
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="KẾT NỐI VÀ ĐỒNG BỘ"
+        title="Nguồn dữ liệu"
+        description={`Gói Pilot cho tối đa ${limit} nguồn. Nguồn API và web được thu thập 6 giờ một lần.`}
+        actions={canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= limit} onClick={() => setOpen(true)}>Thêm nguồn</Button>}
+      />
+      {sources.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, trang đang hiển thị dữ liệu mẫu. Thay đổi chỉ có trên màn hình." />}
+      {canEdit && rows.length >= limit && <Alert className="page-alert" type="info" showIcon title={`Đã dùng hết ${limit} nguồn của gói Pilot.`} />}
+      <Card className="panel-card table-panel" variant="borderless">
+        {sources.error ? <LoadError error={apiErrorMessage(sources.error)} onRetry={sources.reload} /> : (
+          <Table columns={columns} dataSource={rows} rowKey="source_id" loading={sources.loading} pagination={false} scroll={{ x: 640 }} locale={{ emptyText: 'Chưa cấu hình nguồn nào.' }} />
+        )}
+      </Card>
+      <Modal title="Thêm nguồn dữ liệu" open={open} okText="Thêm" cancelText="Hủy" confirmLoading={saving} onOk={create} onCancel={() => setOpen(false)} destroyOnHidden>
+        <Form form={form} layout="vertical" initialValues={{ kind: 'csv' }}>
+          <Form.Item label="Tên hiển thị" name="name" rules={[{ required: true, message: 'Nhập tên nguồn.' }]}><Input placeholder="Website đối thủ B" /></Form.Item>
+          <Form.Item label="Mã nguồn" name="source_id" extra="Chữ thường, số, gạch ngang. Không đổi được sau khi tạo." rules={[{ required: true, message: 'Nhập mã nguồn.' }, { pattern: /^[a-z0-9_-]{2,40}$/, message: 'Chỉ dùng a-z, 0-9, - và _ (2 đến 40 ký tự).' }]}><Input placeholder="competitor-b" /></Form.Item>
+          <Form.Item label="Loại" name="kind" rules={[{ required: true }]}><Select options={KINDS} /></Form.Item>
+        </Form>
+      </Modal>
+    </>
+  );
+}

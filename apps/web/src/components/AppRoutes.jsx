@@ -3,15 +3,13 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useUser } from '../hooks/useUser.js';
 import { WorkspaceLayout } from './WorkspaceLayout.jsx';
 import { RoleGuard } from './RoleGuard.jsx';
-import {
-  CatalogPage,
-  DashboardPage,
-  MembersPage,
-  ReportDetailPage,
-  ReportsPage,
-  SourcesPage,
-  UploadPage,
-} from '../pages/WorkspacePages.jsx';
+import { CatalogPage } from '../pages/Catalog/CatalogPage.jsx';
+import { DashboardPage } from '../pages/Dashboard/DashboardPage.jsx';
+import { MemberListPage } from '../pages/Members/MemberListPage.jsx';
+import { ReportDetailPage } from '../pages/Reports/ReportDetailPage.jsx';
+import { ReportListPage } from '../pages/Reports/ReportListPage.jsx';
+import { SourceListPage } from '../pages/Sources/SourceListPage.jsx';
+import { UploadPage } from '../pages/Upload/UploadPage.jsx';
 
 export function AppRoutes({ cognitoUser, signOut }) {
   const { user, loading, isMock, error, retry } = useUser();
@@ -45,7 +43,7 @@ export function AppRoutes({ cognitoUser, signOut }) {
           className="preview-alert"
           banner
           type="warning"
-          message="Đang xem giao diện bằng hồ sơ mẫu · Dữ liệu tenant và vai trò chưa đến từ backend."
+          title="Đang xem giao diện bằng hồ sơ mẫu · Dữ liệu tenant và vai trò chưa đến từ backend."
         />
       )}
       <WorkspaceLayout
@@ -56,15 +54,15 @@ export function AppRoutes({ cognitoUser, signOut }) {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/sources" element={<SourcesPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/sources" element={<SourceListPage user={user} />} />
+          <Route path="/reports" element={<ReportListPage />} />
           <Route path="/reports/:id" element={<ReportDetailPage />} />
           <Route element={<RoleGuard user={user} allowedRoles={['admin', 'analyst']} />}>
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/catalog" element={<CatalogPage />} />
           </Route>
           <Route element={<RoleGuard user={user} allowedRoles={['admin']} />}>
-            <Route path="/members" element={<MembersPage />} />
+            <Route path="/members" element={<MemberListPage user={user} />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

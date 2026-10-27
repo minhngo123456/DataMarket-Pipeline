@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Group 07 - storage, queues, source workers, dispatchers and normalizer.
-  No API business routes or AI handlers.'
+Description: 'Group 07 - storage, queues, source workers, dispatchers, normalizer
+  and the HTTP API for the web app. AI report handlers are not wired yet.'
 Parameters:
   WebOrigin:
     Type: String
@@ -829,6 +829,7 @@ Resources:
         - GET
         - POST
         - PATCH
+        - DELETE
         - OPTIONS
         AllowHeaders:
         - authorization
@@ -855,6 +856,295 @@ Resources:
         - Ref: UserPoolClient
         Issuer:
           Fn::Sub: https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.api.app.handler
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          RAW_BUCKET:
+            Ref: RawBucket
+          REPORTS_BUCKET:
+            Ref: ReportsBucket
+          REPORT_QUEUE_URL:
+            Ref: ReportQueue
+      Policies:
+      - Ref: ApiDataPolicy
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:DeleteItem
+          Resource:
+            Fn::GetAtt:
+            - ControlTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - ReportQueue
+            - Arn
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${ApiFunction}
+      RetentionInDays: 7
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::GetAtt:
+        - ApiFunction
+        - Arn
+      PayloadFormatVersion: '2.0'
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+  RouteGetMe:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /me
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetDashboardStats:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /dashboard/stats
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetAlerts:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /alerts
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetSources:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /sources
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePostSources:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /sources
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePatchSource:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: PATCH /sources/{id}
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteDeleteSource:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: DELETE /sources/{id}
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePostJobs:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /jobs
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetJobStatus:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /jobs/{id}/status
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetMatrix:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /matrix
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetProducts:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /products
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePostProducts:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /products
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePatchProductMatch:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: PATCH /products/{id}/match
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetPriceHistory:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /products/{id}/price-history
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetPendingSkus:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /pending-skus
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetReports:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /reports
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetReport:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /reports/{id}
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePostReportTrigger:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /reports/trigger
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RouteGetMembers:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: GET /members
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePostMemberInvite:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /members/invite
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
+  RoutePatchMember:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: PATCH /members/{id}
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
   WebOAC:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
@@ -1279,6 +1569,11 @@ Outputs:
   JWTAuthorizerId:
     Value:
       Ref: JWTAuthorizer
+  ApiFunctionArn:
+    Value:
+      Fn::GetAtt:
+      - ApiFunction
+      - Arn
   WebUrl:
     Value:
       Fn::Sub: https://${WebDistribution.DomainName}

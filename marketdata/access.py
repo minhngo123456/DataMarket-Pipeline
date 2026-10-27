@@ -34,6 +34,15 @@ def approve_pending(store, verified_user_id, observation_id, product_id, now):
     store.refresh_job(tenant, receipt["job_id"])
 
 
+def reject_pending(store, verified_user_id, observation_id, now):
+    tenant = member(store, verified_user_id, ("admin", "analyst"))
+    receipt = store.receipt(tenant, observation_id)
+    if not receipt:
+        raise AccessDenied("pending_row_unavailable")
+    store.reject_pending(tenant, observation_id, now=now)
+    store.refresh_job(tenant, receipt["job_id"])
+
+
 def read_history(store, verified_user_id, product_id, now, days=30):
     tenant = member(store, verified_user_id, ("admin", "analyst", "viewer"))
     return history(store, tenant, product_id, now, days)

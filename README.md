@@ -1,6 +1,6 @@
 # MarketData Pipeline
 
-> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng, CSV worker tham chiếu và API/Web workers của Hướng. Bộ kiểm thử giả lập AWS chạy local; chưa triển khai AWS thật. Các phần UI (Minh), API nghiệp vụ và AI/reporting (Hiếu) vẫn cần tích hợp.
+> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng, CSV worker tham chiếu, API/Web workers của Hướng, API nghiệp vụ của Hiếu (đã gắn vào SAM) và giao diện web của Minh. Bộ kiểm thử giả lập AWS chạy local; chưa triển khai AWS thật. Luồng báo cáo AI (Aggregator) chưa có Lambda xử lý ReportQueue.
 
 MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 
@@ -69,6 +69,10 @@ flowchart LR
 
 
 Đây là kiến trúc dự kiến trong báo cáo. Chi tiết ở [architecture.md](docs/architecture.md) và [data-contract.md](docs/data-contract.md). Phân công và bảng 576 giờ theo bản đã nộp ở [team-work-split.md](docs/team-work-split.md); Hoàng phụ trách chính hạ tầng AWS/IAM, chuẩn hóa và kiểm tra cách ly dữ liệu. Mỗi thành viên được phân bổ 144 giờ.
+
+## Chạy frontend
+
+Xem [apps/web/README.md](apps/web/README.md): `cd apps/web && pnpm install && pnpm dev`, kiểm thử bằng `pnpm test`.
 
 ## Chạy phần của Hoàng
 

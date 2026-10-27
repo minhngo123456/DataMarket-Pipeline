@@ -42,3 +42,22 @@ def test_sam_generates_consumers_and_queue_scoped_permissions():
             sends = [s for s in statements if "sqs:SendMessage" in s["Action"]]
             assert len(sends) == 1
             assert sends[0]["Resource"] == {"Fn::GetAtt": ["TransformQueue", "Arn"]}
+
+
+def test_http_api_routes_reach_api_function_with_jwt():
+    resources = translate()["Resources"]
+    routes = [r["Properties"] for r in resources.values() if r["Type"] == "AWS::ApiGatewayV2::Route"]
+    keys = {r["RouteKey"] for r in routes}
+    for key in (
+        "GET /me",
+        "GET /matrix",
+        "DELETE /sources/{id}",
+        "PATCH /products/{id}/match",
+        "PATCH /members/{id}",
+    ):
+        assert key in keys
+    assert all(r["AuthorizationType"] == "JWT" for r in routes)
+    assert all(r["Target"] == {"Fn::Sub": "integrations/${ApiIntegration}"} for r in routes)
+    cors = resources["HttpApi"]["Properties"]["CorsConfiguration"]
+    assert "DELETE" in cors["AllowMethods"]
+    assert resources["ApiFunction"]["Properties"]["Handler"] == "services.api.app.handler"

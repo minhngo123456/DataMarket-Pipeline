@@ -99,7 +99,7 @@ export function WorkspaceLayout({ user, cognitoUser, signOut, children }) {
         </Content>
       </Layout>
 
-      <Drawer className="mobile-nav-drawer" title="Điều hướng" placement="left" open={mobileOpen} onClose={() => setMobileOpen(false)} width={280}>
+      <Drawer className="mobile-nav-drawer" title="Điều hướng" placement="left" open={mobileOpen} onClose={() => setMobileOpen(false)} size={280}>
         <Sidebar role={role} onNavigate={() => setMobileOpen(false)} />
       </Drawer>
     </Layout>

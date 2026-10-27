@@ -2,7 +2,7 @@ import axios from 'axios';
 import { fetchAuthSession } from 'aws-amplify/auth';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/v1',
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001',
   timeout: 10000,
 });
 
