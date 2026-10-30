@@ -43,7 +43,7 @@ Chọn stack riêng cho môi trường dev, Region được nhóm chốt, capabi
 
 Thử luồng CSV: API của Hiếu tạo source và job phía máy chủ, cấp presigned PUT URL cho đúng `tenants/<tenant>/raw/<job>`, trình duyệt tải UTF-8 CSV. Kiểm tra EventBridge, CSVQueue, TransformQueue, receipt/job counts và tenant isolation. Nếu chưa có API, admin có thể seed source/job bằng AWS CLI trong sandbox; không mở route tạm bỏ qua xác thực.
 
-Hiếu bổ sung Aggregator/Notification và SNS topic/subscription, Secrets Manager references theo tenant. APIWorker và WebWorker hiện đã được khai báo làm consumer của APIQueue/WebQueue. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
+ReportAggregator đã đọc ReportQueue và gọi Notification trong cùng Lambda; API dùng USER_POOL_ID để tạo user Cognito khi mời thành viên. Còn thiếu SNS topic/subscription, Secrets Manager references theo tenant. APIWorker và WebWorker hiện đã được khai báo làm consumer của APIQueue/WebQueue. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
 
 Bucket và table có DeletionPolicy Retain để tránh mất dữ liệu khi xóa stack. Khi dọn sandbox, cần kiểm tra rồi xóa riêng tài nguyên còn giữ. CloudWatch/PITR/S3 có thể phát sinh chi phí sau khi triển khai; bản local không tạo tài nguyên AWS.
 
