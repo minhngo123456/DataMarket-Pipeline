@@ -4,7 +4,7 @@ import { marketDataApi } from '../../services/marketDataApi.js';
 import { CatalogPage } from './CatalogPage.jsx';
 
 vi.mock('../../services/marketDataApi.js', () => ({
-  marketDataApi: { getProducts: vi.fn(), getSources: vi.fn(), matchProduct: vi.fn() },
+  marketDataApi: { getProducts: vi.fn(), getSources: vi.fn(), matchProduct: vi.fn(), createProduct: vi.fn() },
 }));
 
 const products = {
@@ -20,6 +20,7 @@ beforeEach(() => {
   marketDataApi.getProducts.mockResolvedValue(structuredClone(products));
   marketDataApi.getSources.mockResolvedValue({ data: [{ source_id: 'vendor', name: 'Vendor CSV' }] });
   marketDataApi.matchProduct.mockResolvedValue({});
+  marketDataApi.createProduct.mockResolvedValue({});
 });
 
 const row = (sku) => screen.getByText(sku).closest('tr');
@@ -43,6 +44,18 @@ describe('CatalogPage', () => {
     fireEvent.keyDown(combobox, { key: 'Enter', code: 'Enter', keyCode: 13 });
     fireEvent.click(within(dialog).getByRole('button', { name: /Ghép vào sản phẩm/ }));
     await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledWith('phone', { observation_id: 'obs2', product_id: 'phone', action: 'approve' }));
+  });
+
+  it('creates a catalog product from the SKU when the catalog is empty', async () => {
+    marketDataApi.getProducts.mockResolvedValue({ data: [structuredClone(products.data[1])] });
+    render(<CatalogPage />);
+    await screen.findByText('SKU-1');
+    fireEvent.click(within(row('SKU-1')).getByRole('button', { name: /Duyệt/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Tên sản phẩm'), { target: { value: 'iPhone 15' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Ghép vào sản phẩm/ }));
+    await waitFor(() => expect(marketDataApi.createProduct).toHaveBeenCalledWith({ product_id: 'sku-1', name: 'iPhone 15' }));
+    await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledWith('sku-1', { observation_id: 'obs1', product_id: 'sku-1', action: 'approve' }));
   });
 
   it('sends reject with the observation id and moves the row out of pending', async () => {

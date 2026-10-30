@@ -1,4 +1,4 @@
-import { CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { Alert, Badge, Button, Card, Input, Modal, Select, Space, Table, Tabs, Tag, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
@@ -13,6 +13,11 @@ const STATUS_TAG = {
   rejected: <Tag color="red">Đã từ chối</Tag>,
 };
 
+/** Suggests a catalog id from a source SKU: lowercase, only a-z 0-9 _ -. */
+export function productIdFromSku(sku) {
+  return String(sku || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
+}
+
 export function rowKey(row) {
   return row.observation_id || `product-${row.product_id}`;
 }
@@ -24,6 +29,7 @@ export function CatalogPage() {
   const [search, setSearch] = useState('');
   const [approving, setApproving] = useState(null);
   const [target, setTarget] = useState(null);
+  const [newProduct, setNewProduct] = useState(null);
   const [busy, setBusy] = useState(null);
 
   const rows = products.data?.data || [];
@@ -72,6 +78,33 @@ export function CatalogPage() {
     }
   };
 
+  const openApprove = (row) => {
+    setApproving(row);
+    setTarget(null);
+    // An empty catalog has nothing to pick, so start with the create form.
+    setNewProduct(catalog.length ? null : { product_id: productIdFromSku(row.source_sku), name: row.source_sku });
+  };
+
+  const approve = async () => {
+    let productId = target;
+    if (newProduct) {
+      productId = newProduct.product_id.trim();
+      const name = newProduct.name.trim();
+      setBusy(rowKey(approving));
+      try {
+        if (!products.isMock) await marketDataApi.createProduct({ product_id: productId, name });
+      } catch (error) {
+        message.error(apiErrorMessage(error, 'Không tạo được sản phẩm.'));
+        setBusy(null);
+        return;
+      }
+      products.setData((data) => ({ ...data, data: [{ product_id: productId, name, match_status: 'confirmed' }, ...data.data] }));
+    }
+    if (await review(approving, 'approve', productId)) setApproving(null);
+  };
+
+  const newProductValid = newProduct && /^[A-Za-z0-9_-]{1,100}$/.test(newProduct.product_id.trim()) && newProduct.name.trim();
+
   const confirmReject = (row) => Modal.confirm({
     title: `Từ chối SKU ${row.source_sku}?`,
     content: 'Dòng giá này sẽ không vào ma trận so sánh. Lần nhập sau SKU này vẫn sẽ vào hàng chờ.',
@@ -97,7 +130,7 @@ export function CatalogPage() {
       key: 'actions',
       render: (_, row) => (row.match_status === 'pending' ? (
         <Space>
-          <Button type="primary" size="small" icon={<CheckOutlined />} loading={busy === rowKey(row)} onClick={() => { setApproving(row); setTarget(null); }}>Duyệt</Button>
+          <Button type="primary" size="small" icon={<CheckOutlined />} loading={busy === rowKey(row)} onClick={() => openApprove(row)}>Duyệt</Button>
           <Button danger size="small" icon={<CloseOutlined />} disabled={busy === rowKey(row)} onClick={() => confirmReject(row)}>Từ chối</Button>
         </Space>
       ) : <span className="muted">—</span>),
@@ -132,12 +165,20 @@ export function CatalogPage() {
         title={`Duyệt SKU ${approving?.source_sku || ''}`}
         okText="Ghép vào sản phẩm"
         cancelText="Hủy"
-        okButtonProps={{ disabled: !target, loading: busy === (approving && rowKey(approving)) }}
+        okButtonProps={{ disabled: newProduct ? !newProductValid : !target, loading: busy === (approving && rowKey(approving)) }}
         onCancel={() => setApproving(null)}
-        onOk={async () => { if (await review(approving, 'approve', target)) setApproving(null); }}
+        onOk={approve}
         destroyOnHidden
       >
-        <p className="modal-description">Chọn sản phẩm trong catalog tương ứng. Mapping được ghi nhận cho các lần nhập sau.</p>
+        <p className="modal-description">Chọn sản phẩm trong catalog tương ứng, hoặc tạo sản phẩm mới. Mapping được ghi nhận cho các lần nhập sau.</p>
+        {newProduct ? (
+          <Space direction="vertical" className="full-select">
+            <Input aria-label="Tên sản phẩm" placeholder="Tên sản phẩm, ví dụ iPhone 15 128GB" value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} />
+            <Input aria-label="Mã sản phẩm" addonBefore="Mã" placeholder="iphone-15-128" value={newProduct.product_id} onChange={(e) => setNewProduct({ ...newProduct, product_id: e.target.value })} />
+            {catalog.length > 0 && <Button type="link" onClick={() => setNewProduct(null)}>Chọn sản phẩm có sẵn</Button>}
+          </Space>
+        ) : (
+        <>
         <Select
           className="full-select"
           showSearch
@@ -148,6 +189,9 @@ export function CatalogPage() {
           options={catalog.map((p) => ({ value: p.product_id, label: `${p.name} (${p.product_id})` }))}
           notFoundContent="Catalog chưa có sản phẩm"
         />
+        <Button type="link" icon={<PlusOutlined />} onClick={() => setNewProduct({ product_id: productIdFromSku(approving?.source_sku), name: approving?.source_sku || '' })}>Tạo sản phẩm mới</Button>
+        </>
+        )}
       </Modal>
     </>
   );
