@@ -19,12 +19,13 @@ class ClaudeClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-3-5-sonnet-20241022",
-        max_tokens: int = 1000,
+        model: str | None = None,
+        max_tokens: int = 4000,
         mock_mode: bool | None = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.model = model
+        # claude-3-5-sonnet-20241022 is retired; CLAUDE_MODEL lets ops switch without a redeploy of code.
+        self.model = model or os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
         self.max_tokens = max_tokens
         # Enable mock if explicitly requested or if no API key is configured
         if mock_mode is not None:
@@ -66,6 +67,9 @@ class ClaudeClient:
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": SYSTEM_PROMPT,
+            # Thinking is always on for this model; low effort keeps a short summary cheap
+            # and leaves max_tokens for the visible text.
+            "output_config": {"effort": "low"},
             "messages": [
                 {"role": "user", "content": user_prompt},
             ],
@@ -78,13 +82,16 @@ class ClaudeClient:
             method="POST",
         )
 
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         text_content = ""
         for block in data.get("content", []):
             if block.get("type") == "text":
                 text_content += block.get("text", "")
+
+        if data.get("stop_reason") == "refusal" or not text_content.strip():
+            raise RuntimeError(f"no_report_text (stop_reason={data.get('stop_reason')})")
 
         return {
             "text": text_content.strip(),

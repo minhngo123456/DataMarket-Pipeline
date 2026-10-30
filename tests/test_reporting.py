@@ -29,6 +29,37 @@ def test_claude_client_mock():
     assert "tenant-a" in result["text"]
 
 
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = json.dumps(body).encode()
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_claude_client_sends_current_model_and_falls_back_on_empty_text(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent.update(json.loads(req.data))
+        return _FakeResponse({"stop_reason": "max_tokens", "content": [{"type": "thinking", "thinking": ""}]})
+
+    monkeypatch.delenv("CLAUDE_MODEL", raising=False)
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", fake_urlopen)
+    client = ClaudeClient(api_key="k", mock_mode=False)
+    result = client.generate_report_summary({"tenant_id": "tenant-a", "period": "2026-10-19", "stats": {}})
+
+    assert sent["model"] == "claude-opus-5-5"
+    assert sent["output_config"] == {"effort": "low"}
+    assert result["status"] == "fallback_quantitative"
+
+
 def test_claude_client_graceful_fallback():
     client = ClaudeClient(api_key="bad-key", mock_mode=False)
     # Simulate failed API call
