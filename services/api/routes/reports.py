@@ -143,6 +143,14 @@ def handle_post_trigger_report(
         "triggered_by": auth.user_id,
     }
 
+    # The aggregator marks JOB#<id> completed and fails if it does not exist, same as
+    # the scheduled ReportDispatcher creates it before enqueueing.
+    store.create_job(
+        auth.tenant_id,
+        job_id,
+        {**body, "status": "queued", "row_count": 0, "expires_at": int((now + timedelta(days=30)).timestamp())},
+    )
+
     queue_url = report_queue_url or os.environ.get("REPORT_QUEUE_URL")
     if queue_url:
         sqs = sqs_client or boto3.client("sqs")
