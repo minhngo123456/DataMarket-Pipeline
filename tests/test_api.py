@@ -216,6 +216,50 @@ def test_members_management_and_quota(store):
     assert json.loads(resp["body"])["error"]["code"] == "quota_exceeded"
 
 
+def test_invite_member_uses_cognito_sub_and_allows_dotted_email(store, monkeypatch):
+    import boto3
+
+    add_user(store, "admin-a", "tenant-a", "admin")
+    cognito = boto3.client("cognito-idp")
+    pool_id = cognito.create_user_pool(PoolName="test", UsernameAttributes=["email"])["UserPool"]["Id"]
+    monkeypatch.setenv("USER_POOL_ID", pool_id)
+
+    resp = handler(
+        make_event("POST", "/members/invite", user_id="admin-a", body={"email": "Nguyen.Minh@Example.com", "role": "analyst"}),
+        store=store,
+    )
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    sub = next(
+        a["Value"]
+        for a in cognito.admin_get_user(UserPoolId=pool_id, Username="nguyen.minh@example.com")["UserAttributes"]
+        if a["Name"] == "sub"
+    )
+    assert body["user_id"] == sub
+    assert body["email"] == "nguyen.minh@example.com"
+
+    # The invited user can now call the API with the identity Cognito puts in the JWT.
+    me = handler(make_event("GET", "/me", user_id=sub), store=store)
+    assert me["statusCode"] == 200
+
+    # Re-inviting the same email reuses the existing Cognito user instead of failing.
+    again = handler(
+        make_event("POST", "/members/invite", user_id="admin-a", body={"email": "nguyen.minh@example.com", "role": "viewer"}),
+        store=store,
+    )
+    assert again["statusCode"] == 201
+    assert json.loads(again["body"])["user_id"] == sub
+
+
+def test_invite_member_rejects_bad_email(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+    resp = handler(
+        make_event("POST", "/members/invite", user_id="admin-a", body={"email": "not-an-email", "role": "viewer"}),
+        store=store,
+    )
+    assert resp["statusCode"] == 400
+
+
 def test_cross_tenant_isolation(store):
     add_user(store, "analyst-a", "tenant-a", "analyst")
     add_user(store, "analyst-b", "tenant-b", "analyst")

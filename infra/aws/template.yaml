@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: 'Group 07 - storage, queues, source workers, dispatchers, normalizer
-  and the HTTP API for the web app. AI report handlers are not wired yet.'
+  the HTTP API for the web app and the AI report aggregator.'
 Parameters:
   WebOrigin:
     Type: String
@@ -13,6 +13,12 @@ Parameters:
     AllowedValues:
     - DISABLED
     - ENABLED
+  AnthropicApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Claude API key for report narratives; empty keeps reports on the
+      rule-based fallback summary.
 Globals:
   Function:
     Runtime: python3.12
@@ -871,9 +877,19 @@ Resources:
             Ref: ReportsBucket
           REPORT_QUEUE_URL:
             Ref: ReportQueue
+          USER_POOL_ID:
+            Ref: UserPool
       Policies:
       - Ref: ApiDataPolicy
       - Statement:
+        - Effect: Allow
+          Action:
+          - cognito-idp:AdminCreateUser
+          - cognito-idp:AdminGetUser
+          Resource:
+            Fn::GetAtt:
+            - UserPool
+            - Arn
         - Effect: Allow
           Action:
           - dynamodb:DeleteItem
@@ -888,6 +904,89 @@ Resources:
             Fn::GetAtt:
             - ReportQueue
             - Arn
+  ReportAggregator:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.reporting.aggregator.handler
+      Timeout: 120
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
+          REPORTS_BUCKET:
+            Ref: ReportsBucket
+          ANTHROPIC_API_KEY:
+            Ref: AnthropicApiKey
+      Events:
+        ReportMessages:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - ReportQueue
+              - Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+            - ReportBatchItemFailures
+            ScalingConfig:
+              MaximumConcurrency: 2
+      Role:
+        Fn::GetAtt:
+        - ReportAggregatorExecutionRole
+        - Arn
+  ReportAggregatorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: ReportAggregatorDataAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - *id003
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            Resource:
+            - Fn::GetAtt:
+              - ObservationsTable
+              - Arn
+            - Fn::Sub: ${ObservationsTable.Arn}/index/by_day
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${ReportsBucket.Arn}/tenants/*/reports/*
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+              - ReportQueue
+              - Arn
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  ReportAggregatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${ReportAggregator}
+      RetentionInDays: 7
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -1521,6 +1620,11 @@ Outputs:
     Value:
       Fn::GetAtt:
       - ReportQueue
+      - Arn
+  ReportAggregatorArn:
+    Value:
+      Fn::GetAtt:
+      - ReportAggregator
       - Arn
   NormalizerArn:
     Value:
