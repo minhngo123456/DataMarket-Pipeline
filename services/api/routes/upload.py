@@ -5,12 +5,11 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import boto3
-
 from marketdata.contracts import AccessDenied, identifier, iso, stable_id
 from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok
+from services.api.s3 import presign_client
 
 
 def handle_csv_upload_url(
@@ -65,7 +64,7 @@ def handle_csv_upload_url(
     )
 
     bucket = raw_bucket_name or os.environ.get("RAW_BUCKET")
-    s3 = s3_client or boto3.client("s3")
+    s3 = s3_client or presign_client()
 
     upload_url = s3.generate_presigned_url(
         "put_object",

@@ -13,6 +13,7 @@ from marketdata.contracts import AccessDenied, QuotaExceeded, identifier, iso, s
 from marketdata.repository import DynamoStore, pk
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
+from services.api.s3 import presign_client
 
 
 def handle_get_reports(event: dict, store: DynamoStore, auth: AuthContext) -> dict:
@@ -72,7 +73,7 @@ def handle_get_report_detail(
 
     download_url = None
     if bucket:
-        s3 = s3_client or boto3.client("s3")
+        s3 = s3_client or presign_client()
         try:
             download_url = s3.generate_presigned_url(
                 "get_object",
