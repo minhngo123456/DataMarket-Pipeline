@@ -19,6 +19,10 @@ Parameters:
     NoEcho: true
     Description: Claude API key for report narratives; empty keeps reports on the
       rule-based fallback summary.
+  AnthropicSecretName:
+    Type: String
+    Default: ''
+    Description: Name or ARN of AWS Secrets Manager secret holding Claude API key.
   EnableCloudFront:
     Type: String
     Default: DISABLED
@@ -932,6 +936,8 @@ Resources:
             Ref: ReportsBucket
           ANTHROPIC_API_KEY:
             Ref: AnthropicApiKey
+          ANTHROPIC_SECRET_NAME:
+            Ref: AnthropicSecretName
       Events:
         ReportMessages:
           Type: SQS
@@ -988,6 +994,11 @@ Resources:
               Fn::GetAtt:
               - ReportQueue
               - Arn
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetSecretValue
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
           - Effect: Allow
             Action:
             - logs:CreateLogGroup

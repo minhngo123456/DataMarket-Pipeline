@@ -10,9 +10,53 @@ import os
 import urllib.error
 import urllib.request
 
+import boto3
+
 from services.reporting.templates.prompt_templates import SYSTEM_PROMPT, build_claude_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def get_anthropic_api_key(
+    api_key: str | None = None,
+    secret_name: str | None = None,
+    secrets_client=None,
+) -> str:
+    """Retrieve Anthropic API key with fallback order:
+    1. Explicit api_key argument.
+    2. AWS Secrets Manager (if secret_name or ANTHROPIC_SECRET_NAME is set).
+    3. Environment variable ANTHROPIC_API_KEY (for local development/testing).
+    """
+    if api_key:
+        return api_key
+
+    target_secret = secret_name or os.environ.get("ANTHROPIC_SECRET_NAME") or os.environ.get("SECRETS_MANAGER_SECRET_ID")
+    if target_secret:
+        try:
+            client = secrets_client or boto3.client("secretsmanager")
+            response = client.get_secret_value(SecretId=target_secret)
+            secret_str = response.get("SecretString", "")
+            if secret_str:
+                try:
+                    parsed = json.loads(secret_str)
+                    if isinstance(parsed, dict):
+                        return (
+                            parsed.get("ANTHROPIC_API_KEY")
+                            or parsed.get("api_key")
+                            or parsed.get("apiKey")
+                            or secret_str
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                return secret_str
+        except Exception as exc:
+            logger.warning(
+                "Could not retrieve Anthropic API key from Secrets Manager (%s): %s. Falling back to env var.",
+                target_secret,
+                exc,
+            )
+
+    return os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 class ClaudeClient:
@@ -22,8 +66,15 @@ class ClaudeClient:
         model: str | None = None,
         max_tokens: int = 4000,
         mock_mode: bool | None = None,
+        secret_name: str | None = None,
+        secrets_client=None,
     ):
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        self.secret_name = secret_name or os.environ.get("ANTHROPIC_SECRET_NAME")
+        self.api_key = get_anthropic_api_key(
+            api_key=api_key,
+            secret_name=self.secret_name,
+            secrets_client=secrets_client,
+        )
         # claude-3-5-sonnet-20241022 is retired; CLAUDE_MODEL lets ops switch without a redeploy of code.
         self.model = model or os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
         self.max_tokens = max_tokens

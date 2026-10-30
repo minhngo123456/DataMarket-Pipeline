@@ -400,3 +400,48 @@ class DynamoStore:
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
                 raise
+
+    def acquire_report_lock(self, tenant_id, date_str, job_id=None, triggered_by=None):
+        """Acquire a daily report lock atomically using DynamoDB Conditional Write.
+
+        Prevents duplicate AI report generation by concurrent requests or schedulers.
+        Uses composite key pk=T#<tenant>, sk=LOCK#YYYYMMDD.
+        Returns True if lock was acquired, False if lock was already held.
+        """
+        tenant_id = identifier(tenant_id)
+        date_clean = date_str.replace("-", "")
+        now = datetime.now(UTC)
+        item = {
+            "pk": pk(tenant_id),
+            "sk": "LOCK#" + date_clean,
+            "tenant_id": tenant_id,
+            "date": date_str,
+            "job_id": identifier(job_id) if job_id else None,
+            "triggered_by": triggered_by,
+            "status": "locked",
+            "created_at": iso(now),
+            "expires_at": int((now + timedelta(days=2)).timestamp()),
+        }
+        try:
+            self.control.put_item(
+                Item=item,
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            # Also record REPORT_DAILY# for backward compatibility
+            try:
+                self.control.put_item(
+                    Item={**item, "sk": f"REPORT_DAILY#{date_str}"},
+                    ConditionExpression="attribute_not_exists(pk)",
+                )
+            except ClientError:
+                pass
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
+    def get_report_lock(self, tenant_id, date_str):
+        """Check if a report lock exists for a tenant on a specific date."""
+        date_clean = date_str.replace("-", "")
+        return self.get(tenant_id, "LOCK#" + date_clean) or self.get(tenant_id, f"REPORT_DAILY#{date_str}")
