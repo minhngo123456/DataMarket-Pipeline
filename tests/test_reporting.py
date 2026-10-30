@@ -151,6 +151,9 @@ def test_daily_ai_report_quota_limit(store):
     # First trigger succeeds
     resp1 = handler(make_event("POST", "/reports/trigger", user_id="analyst-a"), store=store)
     assert resp1["statusCode"] == 202
+    # The aggregator updates this job record when it finishes, so it must exist.
+    job_id = json.loads(resp1["body"])["job_id"]
+    assert store.get("tenant-a", "JOB#" + job_id)["status"] == "queued"
 
     # Second trigger on same day fails with 429
     resp2 = handler(make_event("POST", "/reports/trigger", user_id="analyst-a"), store=store)

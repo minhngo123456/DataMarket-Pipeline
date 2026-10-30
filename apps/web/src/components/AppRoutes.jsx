@@ -55,7 +55,7 @@ export function AppRoutes({ cognitoUser, signOut }) {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/sources" element={<SourceListPage user={user} />} />
-          <Route path="/reports" element={<ReportListPage />} />
+          <Route path="/reports" element={<ReportListPage user={user} />} />
           <Route path="/reports/:id" element={<ReportDetailPage />} />
           <Route element={<RoleGuard user={user} allowedRoles={['admin', 'analyst']} />}>
             <Route path="/upload" element={<UploadPage />} />

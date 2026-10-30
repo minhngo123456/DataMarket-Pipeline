@@ -27,6 +27,7 @@ export const marketDataApi = {
     api.get(`${resourcePath('products', productId)}/price-history`, { params }).then(data),
   getReports: (params) => api.get('/reports', { params }).then(data),
   getReport: (reportId) => api.get(resourcePath('reports', reportId)).then(data),
+  triggerReport: () => api.post('/reports/trigger').then(data),
   getMembers: (params) => api.get('/members', { params }).then(data),
   inviteMember: (payload) => api.post('/members/invite', payload).then(data),
   updateMember: (userId, payload) =>

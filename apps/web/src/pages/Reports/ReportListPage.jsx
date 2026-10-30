@@ -1,5 +1,6 @@
-import { RightOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Table, Tag } from 'antd';
+import { RightOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Table, Tag, message } from 'antd';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
 import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
@@ -14,9 +15,38 @@ export function ReportStatus({ report }) {
   return <Tag>{report.status || 'Không rõ'}</Tag>;
 }
 
-export function ReportListPage() {
+export function ReportListPage({ user }) {
   const navigate = useNavigate();
   const reports = useApiData(() => marketDataApi.getReports({ limit: 30 }), mockReports);
+  const [triggering, setTriggering] = useState(false);
+  const [waitingSince, setWaitingSince] = useState(null);
+  const canTrigger = user?.role === 'admin' || user?.role === 'analyst';
+  const { reload } = reports;
+
+  // The aggregator runs asynchronously; refresh the list for a couple of minutes.
+  useEffect(() => {
+    if (!waitingSince) return undefined;
+    const timer = setInterval(() => {
+      if (Date.now() - waitingSince > 120_000) setWaitingSince(null);
+      else reload();
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [waitingSince, reload]);
+
+  const trigger = async () => {
+    setTriggering(true);
+    try {
+      await marketDataApi.triggerReport();
+      message.success('Đã gửi yêu cầu tạo báo cáo. Báo cáo sẽ xuất hiện sau khoảng một phút.');
+      setWaitingSince(Date.now());
+    } catch (error) {
+      message.error(error?.response?.status === 429
+        ? 'Hôm nay đã tạo báo cáo rồi (giới hạn 1 báo cáo mỗi ngày).'
+        : apiErrorMessage(error, 'Không tạo được báo cáo.'));
+    } finally {
+      setTriggering(false);
+    }
+  };
   const rows = [...(reports.data?.data || [])].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const columns = [
     { title: 'KỲ BÁO CÁO', dataIndex: 'period', key: 'period', render: (period, row) => <div className="table-primary"><strong>{period || '—'}</strong><span>{row.report_id}</span></div> },
@@ -26,7 +56,8 @@ export function ReportListPage() {
   ];
   return (
     <>
-      <PageHeading eyebrow="BÁO CÁO AI" title="Báo cáo" description="Báo cáo thị trường hằng ngày lúc 08:00 (giờ Việt Nam), tóm tắt bởi Claude." />
+      <PageHeading eyebrow="BÁO CÁO AI" title="Báo cáo" description="Báo cáo thị trường hằng ngày lúc 08:00 (giờ Việt Nam), tóm tắt bởi Claude."
+        actions={canTrigger && !reports.isMock && <Button type="primary" icon={<ThunderboltOutlined />} loading={triggering} onClick={trigger}>Tạo báo cáo ngay</Button>} />
       {reports.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, trang đang hiển thị dữ liệu mẫu." />}
       <Card className="panel-card table-panel" variant="borderless">
         {reports.error ? <LoadError error={apiErrorMessage(reports.error)} onRetry={reports.reload} /> : (
