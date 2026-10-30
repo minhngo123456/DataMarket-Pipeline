@@ -37,6 +37,15 @@ def test_unauthenticated_request_rejected(store):
     data = json.loads(resp["body"])
     assert data["error"]["code"] == "access_denied"
 
+    # Verify that test headers are rejected when ALLOW_TEST_AUTH is not enabled
+    event_with_test_header = {
+        "rawPath": "/me",
+        "requestContext": {"http": {"method": "GET"}},
+        "headers": {"x-test-sub": "user-spoofed"},
+    }
+    resp_spoof = handler(event_with_test_header, store=store)
+    assert resp_spoof["statusCode"] == 403
+
 
 def test_inactive_membership_rejected(store):
     add_user(store, "user-revoked", "tenant-a", "analyst")

@@ -2,7 +2,7 @@
 
 Handles incoming API Gateway v2 HTTP events, authenticates requests against Cognito JWT
 and DynamoDB membership, routes to respective handlers, and enforces RBAC and quota limits.
-Implements the full 17-endpoint contract defined in docs/api-contract-frontend.md.
+Implements the full 18-endpoint contract defined in docs/api-contract-frontend.md.
 """
 
 import logging

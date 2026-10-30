@@ -26,7 +26,8 @@ def extract_claims(event: dict) -> dict:
 
     In production, API Gateway JWT Authorizer populates:
     event['requestContext']['authorizer']['jwt']['claims']
-    For local development/tests, we also allow Authorization header fallback.
+    For local development/tests, Authorization header fallback is only enabled
+    when ALLOW_TEST_AUTH=true (as specified in Report 2 section 2.6).
     """
     rc = event.get("requestContext", {})
     authorizer = rc.get("authorizer", {})
@@ -40,21 +41,19 @@ def extract_claims(event: dict) -> dict:
     if "claims" in authorizer and isinstance(authorizer["claims"], dict):
         return authorizer["claims"]
 
-    # 3. Test/Dev header fallback (e.g. for offline test invocation). Never enabled in AWS:
-    # without this guard a caller could send a raw user id as the bearer token.
-    if os.environ.get("ALLOW_TEST_AUTH") != "true":
-        return {}
-    headers = event.get("headers") or {}
-    test_sub = headers.get("x-test-sub") or headers.get("X-Test-Sub")
-    if test_sub:
-        return {"sub": test_sub, "email": f"{test_sub}@example.com"}
+    # 3. Test/Dev header fallback (strictly guarded by ALLOW_TEST_AUTH flag)
+    if os.environ.get("ALLOW_TEST_AUTH", "false").lower() == "true":
+        headers = event.get("headers") or {}
+        test_sub = headers.get("x-test-sub") or headers.get("X-Test-Sub")
+        if test_sub:
+            return {"sub": test_sub, "email": f"{test_sub}@example.com"}
 
-    auth_header = headers.get("authorization") or headers.get("Authorization") or ""
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        # In test environments, if token matches a simple user id:
-        if token and " " not in token:
-            return {"sub": token}
+        auth_header = headers.get("authorization") or headers.get("Authorization") or ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            # In test environments, if token matches a simple user id:
+            if token and " " not in token:
+                return {"sub": token}
 
     return {}
 
