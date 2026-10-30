@@ -79,8 +79,28 @@ def process_report_job(
         "top_changes": top_changes[:5],
     }
 
-    # 3. Call Claude API (or mock / fallback)
-    ai_client = claude_client or ClaudeClient()
+    # Check if a completed report already exists for this tenant & period (deduplication & retry safety)
+    existing_report = store.get(tenant_id, "REPORT#" + report_id)
+    if existing_report and existing_report.get("status") in ("ready", "partial") and existing_report.get("ai_status"):
+        logger.info(
+            "Report %s already generated for tenant %s (period=%s). Reusing cached result without invoking Claude API.",
+            report_id,
+            tenant_id,
+            period,
+        )
+        store.update_job(tenant_id, job_id, status="completed", report_id=report_id)
+        return {
+            "tenant_id": tenant_id,
+            "report_id": report_id,
+            "status": "completed",
+            "reused": True,
+        }
+
+    # Record daily lock if not already recorded (e.g. if invoked by scheduled dispatcher)
+    store.acquire_report_lock(tenant_id, period, job_id=job_id, triggered_by="aggregator")
+
+    # 3. Call Claude API (reads key from AWS Secrets Manager or env var fallback)
+    ai_client = claude_client or ClaudeClient(secret_name=os.environ.get("ANTHROPIC_SECRET_NAME"))
     ai_result = ai_client.generate_report_summary(summary_data)
 
     # 4. Save full report artifact into S3

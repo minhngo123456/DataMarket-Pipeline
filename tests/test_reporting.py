@@ -160,3 +160,116 @@ def test_daily_ai_report_quota_limit(store):
     assert resp2["statusCode"] == 429
     data = json.loads(resp2["body"])
     assert data["error"]["code"] == "quota_exceeded"
+
+
+def test_report_lock_atomic_conditional_write(store):
+    # Tenant A acquires lock for 2026-10-30
+    assert store.acquire_report_lock("tenant-a", "2026-10-30", job_id="job-1") is True
+
+    # Immediate second attempt fails due to DynamoDB conditional write
+    assert store.acquire_report_lock("tenant-a", "2026-10-30", job_id="job-2") is False
+
+    # Tenant B can acquire lock for the same date independently (multi-tenant isolation)
+    assert store.acquire_report_lock("tenant-b", "2026-10-30", job_id="job-3") is True
+
+    # Verify lock item content
+    lock = store.get_report_lock("tenant-a", "2026-10-30")
+    assert lock is not None
+    assert lock["status"] == "locked"
+    assert lock["job_id"] == "job-1"
+
+
+def test_secrets_manager_api_key_retrieval(monkeypatch):
+    from services.reporting.claude_client import get_anthropic_api_key
+
+    # Mock Secrets Manager client
+    class FakeSecretsClient:
+        def __init__(self, secrets):
+            self._secrets = secrets
+
+        def get_secret_value(self, SecretId):
+            if SecretId in self._secrets:
+                return {"SecretString": self._secrets[SecretId]}
+            raise RuntimeError(f"Secret {SecretId} not found")
+
+    client = FakeSecretsClient({
+        "app/anthropic_plain": "sk-ant-plain-secret-value",
+        "app/anthropic_json": json.dumps({"ANTHROPIC_API_KEY": "sk-ant-json-secret-value"}),
+    })
+
+    # 1. Plain text secret from Secrets Manager
+    key_plain = get_anthropic_api_key(secret_name="app/anthropic_plain", secrets_client=client)
+    assert key_plain == "sk-ant-plain-secret-value"
+
+    # 2. JSON-encoded secret from Secrets Manager
+    key_json = get_anthropic_api_key(secret_name="app/anthropic_json", secrets_client=client)
+    assert key_json == "sk-ant-json-secret-value"
+
+    # 3. Explicit api_key overrides Secrets Manager
+    key_override = get_anthropic_api_key(api_key="explicit-key", secret_name="app/anthropic_plain", secrets_client=client)
+    assert key_override == "explicit-key"
+
+    # 4. Fallback to env var if Secrets Manager fails
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-fallback")
+    key_fallback = get_anthropic_api_key(secret_name="app/non_existent", secrets_client=client)
+    assert key_fallback == "sk-env-fallback"
+
+
+def test_aggregator_reuses_cached_report_without_calling_ai(store, monkeypatch):
+    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
+    s3 = boto3.client("s3")
+    s3.create_bucket(Bucket="reports-bucket-test")
+
+    # Seed an already completed report
+    period = "2026-10-19"
+    from marketdata.contracts import stable_id
+    report_id = stable_id("tenant-a", period)
+    store.put(
+        "tenant-a",
+        "REPORT#" + report_id,
+        {
+            "report_id": report_id,
+            "period": period,
+            "status": "ready",
+            "ai_status": "ai_generated",
+            "summary": "Existing cached report summary",
+        },
+    )
+
+    store.create_job(
+        "tenant-a",
+        "report-job-cached",
+        {
+            "schema_version": 1,
+            "tenant_id": "tenant-a",
+            "source_id": "report",
+            "job_id": "report-job-cached",
+            "kind": "report",
+            "scheduled_at": iso(NOW),
+            "status": "queued",
+        },
+    )
+
+    # Fake ClaudeClient that raises an error if invoked
+    class FailingClaudeClient:
+        def generate_report_summary(self, summary_data):
+            raise AssertionError("Claude API should not be called when report is already cached!")
+
+    result = process_report_job(
+        {
+            "schema_version": 1,
+            "tenant_id": "tenant-a",
+            "source_id": "report",
+            "job_id": "report-job-cached",
+            "kind": "report",
+            "scheduled_at": iso(NOW),
+        },
+        store,
+        s3_client=s3,
+        reports_bucket="reports-bucket-test",
+        claude_client=FailingClaudeClient(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["reused"] is True
+    assert store.get("tenant-a", "JOB#report-job-cached")["status"] == "completed"

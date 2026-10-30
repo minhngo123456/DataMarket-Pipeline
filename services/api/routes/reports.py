@@ -112,25 +112,17 @@ def handle_post_trigger_report(
     now = datetime.now(UTC)
     vietnam_date = now.astimezone(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
 
-    # Check if a report for today has already been generated or queued
-    daily_key = f"REPORT_DAILY#{vietnam_date}"
-    daily_quota_item = store.get(auth.tenant_id, daily_key)
-    if daily_quota_item:
-        raise QuotaExceeded("daily_ai_report_quota_reached")
-
-    # Record quota lock item atomically
+    # Acquire daily report lock atomically using DynamoDB Conditional Write (T#<tenant>, sk=LOCK#YYYYMMDD).
+    # Prevents race conditions and duplicate AI calls from concurrent triggers or schedulers.
     job_id = stable_id(auth.tenant_id, "report", vietnam_date, str(uuid.uuid4())[:6])
-    store.put(
+    acquired = store.acquire_report_lock(
         auth.tenant_id,
-        daily_key,
-        {
-            "date": vietnam_date,
-            "triggered_by": auth.user_id,
-            "job_id": job_id,
-            "created_at": iso(now),
-            "expires_at": int((now + timedelta(days=2)).timestamp()),
-        },
+        vietnam_date,
+        job_id=job_id,
+        triggered_by=auth.user_id,
     )
+    if not acquired:
+        raise QuotaExceeded("daily_ai_report_quota_reached")
 
     body = {
         "schema_version": 1,
