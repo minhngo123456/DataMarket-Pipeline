@@ -20,6 +20,7 @@ export const marketDataApi = {
     api.get(`${resourcePath('jobs', jobId)}/status`).then(data),
   getPriceMatrix: (params) => api.get('/matrix', { params }).then(data),
   getProducts: (params) => api.get('/products', { params }).then(data),
+  createProduct: (payload) => api.post('/products', payload).then(data),
   matchProduct: (productId, payload) =>
     api.patch(`${resourcePath('products', productId)}/match`, payload).then(data),
   getPriceHistory: (productId, params) =>
