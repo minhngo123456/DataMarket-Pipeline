@@ -32,3 +32,13 @@ Thumbs.db
 
 # Personal dev guides
 GUIDE_*.md
+
+# Local test outputs and artifacts
+stack-resources-*.json
+*.tmp
+
+# AI tools and local agent runtimes
+*gemini*
+.claude/
+.agents/
+.codex/
