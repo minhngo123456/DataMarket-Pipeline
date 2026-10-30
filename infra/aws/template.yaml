@@ -19,6 +19,18 @@ Parameters:
     NoEcho: true
     Description: Claude API key for report narratives; empty keeps reports on the
       rule-based fallback summary.
+  EnableCloudFront:
+    Type: String
+    Default: DISABLED
+    AllowedValues:
+    - DISABLED
+    - ENABLED
+    Description: Enable CloudFront distribution. Disabled by default while awaiting AWS account verification.
+Conditions:
+  UseCloudFront:
+    Fn::Equals:
+    - Ref: EnableCloudFront
+    - ENABLED
 Globals:
   Function:
     Runtime: python3.12
@@ -827,6 +839,8 @@ Resources:
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-http-api
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
@@ -1246,6 +1260,7 @@ Resources:
         Fn::Sub: integrations/${ApiIntegration}
   WebOAC:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCloudFront
     Properties:
       OriginAccessControlConfig:
         Name:
@@ -1255,6 +1270,7 @@ Resources:
         SigningProtocol: sigv4
   WebDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: UseCloudFront
     Properties:
       DistributionConfig:
         Enabled: true
@@ -1288,6 +1304,7 @@ Resources:
           CloudFrontDefaultCertificate: true
   WebBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
     Properties:
       Bucket:
         Ref: WebBucket
@@ -1679,6 +1696,7 @@ Outputs:
       - ApiFunction
       - Arn
   WebUrl:
+    Condition: UseCloudFront
     Value:
       Fn::Sub: https://${WebDistribution.DomainName}
   ApiDataPolicyArn:
