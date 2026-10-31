@@ -938,6 +938,8 @@ Resources:
             Ref: AnthropicApiKey
           ANTHROPIC_SECRET_NAME:
             Ref: AnthropicSecretName
+          SNS_TOPIC_ARN:
+            Ref: NotificationTopic
       Events:
         ReportMessages:
           Type: SQS
@@ -1001,6 +1003,11 @@ Resources:
               Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
           - Effect: Allow
             Action:
+            - sns:Publish
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:*
+          - Effect: Allow
+            Action:
             - logs:CreateLogGroup
             - logs:CreateLogStream
             - logs:PutLogEvents
@@ -1011,6 +1018,37 @@ Resources:
     Properties:
       LogGroupName:
         Fn::Sub: /aws/lambda/${ReportAggregator}
+      RetentionInDays: 7
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Fn::Sub: ${AWS::StackName}-alerts
+      DisplayName: MarketData Tenant Alerts
+  NotificationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../../build/lambda/
+      Handler: services.reporting.notification.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          CONTROL_TABLE: *id001
+          SNS_TOPIC_ARN:
+            Ref: NotificationTopic
+      Policies:
+      - Statement:
+        - *id003
+        - Effect: Allow
+          Action:
+          - sns:Publish
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:*
+  NotificationFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${NotificationFunction}
       RetentionInDays: 7
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1713,3 +1751,6 @@ Outputs:
   ApiDataPolicyArn:
     Value:
       Ref: ApiDataPolicy
+  NotificationTopicArn:
+    Value:
+      Ref: NotificationTopic
