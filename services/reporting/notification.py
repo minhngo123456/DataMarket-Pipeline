@@ -61,15 +61,43 @@ def dispatch_notification(
     store: DynamoStore,
     sns_client=None,
 ) -> dict:
-    """Orchestrate notification delivery across enabled tenant channels with deduplication."""
-    # Check deduplication record in DynamoDB
+    """Orchestrate notification delivery across enabled tenant channels with per-channel deduplication and retry."""
     notif_key = f"NOTIF#{report_id}"
-    existing = store.get(tenant_id, notif_key)
-    if existing and existing.get("status") == "sent":
-        logger.info("Notification for %s/%s already sent. Skipping.", tenant_id, report_id)
-        return {"status": "skipped", "reason": "already_sent"}
+    existing = store.get(tenant_id, notif_key) or {}
 
     tenant_meta = store.tenant(tenant_id)
+    sns_topic = tenant_meta.get("sns_topic_arn") or os.environ.get("SNS_TOPIC_ARN")
+    slack_webhook = tenant_meta.get("slack_webhook_url") or os.environ.get("SLACK_WEBHOOK_URL")
+
+    # Determine which channels were already successfully sent in a prior attempt
+    sns_already_sent = bool(existing.get("sns_sent", False) or "sns" in existing.get("channels", []))
+    slack_already_sent = bool(existing.get("slack_sent", False) or "slack" in existing.get("channels", []))
+
+    configured_channels = []
+    if sns_topic:
+        configured_channels.append("sns")
+    if slack_webhook:
+        configured_channels.append("slack")
+
+    if not configured_channels:
+        return {"status": "none_configured", "channels": [], "sns_sent": False, "slack_sent": False}
+
+    # If all configured channels have already succeeded, skip entirely
+    all_configured_sent = (not sns_topic or sns_already_sent) and (not slack_webhook or slack_already_sent)
+    if all_configured_sent:
+        logger.info(
+            "Notification for %s/%s already delivered to all configured channels. Skipping.",
+            tenant_id,
+            report_id,
+        )
+        return {
+            "status": "skipped",
+            "reason": "already_sent",
+            "channels": existing.get("channels", configured_channels),
+            "sns_sent": sns_already_sent,
+            "slack_sent": slack_already_sent,
+        }
+
     subject = f"[MarketData] Báo cáo thị trường ngày {period} - {tenant_id}"
     digest_body = (
         f"Kính gửi Quý khách hàng ({tenant_id}),\n\n"
@@ -79,38 +107,76 @@ def dispatch_notification(
         f"Để xem ma trận chi tiết và biểu đồ biến động giá, vui lòng truy cập Dashboard.\n"
     )
 
-    channels_sent = []
+    sns_sent = sns_already_sent
+    slack_sent = slack_already_sent
+    sns_error = existing.get("sns_error")
+    slack_error = existing.get("slack_error")
 
-    # 1. AWS SNS Topic
-    sns_topic = tenant_meta.get("sns_topic_arn") or os.environ.get("SNS_TOPIC_ARN")
+    # 1. AWS SNS Topic: only send if enabled and not already delivered
     if sns_topic:
-        if send_sns_notification(sns_topic, subject, digest_body, sns_client=sns_client):
-            channels_sent.append("sns")
+        if not sns_already_sent:
+            if send_sns_notification(sns_topic, subject, digest_body, sns_client=sns_client):
+                sns_sent = True
+                sns_error = None
+            else:
+                sns_sent = False
+                sns_error = "sns_publish_failed"
+        else:
+            logger.info("SNS notification already sent for %s/%s. Skipping to prevent duplicate email.", tenant_id, report_id)
 
-    # 2. Slack Webhook
-    slack_webhook = tenant_meta.get("slack_webhook_url") or os.environ.get("SLACK_WEBHOOK_URL")
+    # 2. Slack Webhook: only send if enabled and not already delivered
     if slack_webhook:
-        if send_slack_webhook(slack_webhook, digest_body, tenant_id, period):
-            channels_sent.append("slack")
+        if not slack_already_sent:
+            if send_slack_webhook(slack_webhook, digest_body, tenant_id, period):
+                slack_sent = True
+                slack_error = None
+            else:
+                slack_sent = False
+                slack_error = "slack_webhook_failed"
+        else:
+            logger.info("Slack notification already sent for %s/%s. Skipping to prevent duplicate message.", tenant_id, report_id)
 
-    # Save notification record in DynamoDB ControlTable
+    channels_sent = []
+    if sns_sent:
+        channels_sent.append("sns")
+    if slack_sent:
+        channels_sent.append("slack")
+
+    # Determine overall status
+    if all(c in channels_sent for c in configured_channels):
+        overall_status = "sent"
+    elif any(c in channels_sent for c in configured_channels):
+        overall_status = "partial"
+    else:
+        overall_status = "failed"
+
     now = datetime.now(UTC)
-    store.put(
-        tenant_id,
-        notif_key,
-        {
-            "report_id": report_id,
-            "period": period,
-            "status": "sent" if channels_sent else "none_configured",
-            "channels": channels_sent,
-            "sent_at": iso(now),
-            "expires_at": int((now + timedelta(days=90)).timestamp()),
-        },
-    )
+    record = {
+        "report_id": report_id,
+        "period": period,
+        "status": overall_status,
+        "channels": channels_sent,
+        "sns_sent": sns_sent,
+        "slack_sent": slack_sent,
+        "sns_error": sns_error,
+        "slack_error": slack_error,
+        "last_attempt_at": iso(now),
+        "expires_at": int((now + timedelta(days=90)).timestamp()),
+    }
+    if "created_at" in existing:
+        record["created_at"] = existing["created_at"]
+    else:
+        record["created_at"] = iso(now)
+
+    store.put(tenant_id, notif_key, record)
 
     return {
-        "status": "sent" if channels_sent else "none_configured",
+        "status": overall_status,
         "channels": channels_sent,
+        "sns_sent": sns_sent,
+        "slack_sent": slack_sent,
+        "sns_error": sns_error,
+        "slack_error": slack_error,
     }
 
 
