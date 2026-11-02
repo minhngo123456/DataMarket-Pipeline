@@ -72,6 +72,8 @@ def dispatch_notification(
     existing = store.get(tenant_id, notif_key) or {}
 
     tenant_meta = store.tenant(tenant_id)
+    # IAM allows publishing to the stack's NotificationTopic only. A tenant sns_topic_arn pointing
+    # elsewhere needs its own grant in the template, or the publish fails as sns_publish_failed.
     sns_topic = tenant_meta.get("sns_topic_arn") or os.environ.get("SNS_TOPIC_ARN")
     slack_webhook = tenant_meta.get("slack_webhook_url") or os.environ.get("SLACK_WEBHOOK_URL")
 

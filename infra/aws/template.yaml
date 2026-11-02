@@ -22,7 +22,8 @@ Parameters:
   AnthropicSecretName:
     Type: String
     Default: ''
-    Description: Name or ARN of AWS Secrets Manager secret holding Claude API key.
+    AllowedPattern: ^[A-Za-z0-9/_+=.@-]*$
+    Description: Name (not ARN) of the AWS Secrets Manager secret holding the Claude API key.
   EnableCloudFront:
     Type: String
     Default: DISABLED
@@ -35,6 +36,11 @@ Conditions:
     Fn::Equals:
     - Ref: EnableCloudFront
     - ENABLED
+  HasAnthropicSecret:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AnthropicSecretName
+      - ''
 Globals:
   Function:
     Runtime: python3.12
@@ -1000,14 +1006,9 @@ Resources:
               - Arn
           - Effect: Allow
             Action:
-            - secretsmanager:GetSecretValue
-            Resource:
-              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
-          - Effect: Allow
-            Action:
             - sns:Publish
             Resource:
-              Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:*
+              Ref: NotificationTopic
           - Effect: Allow
             Action:
             - lambda:InvokeFunction
@@ -1022,6 +1023,21 @@ Resources:
             - logs:PutLogEvents
             Resource:
               Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  ReportAggregatorSecretPolicy:
+    Type: AWS::IAM::RolePolicy
+    Condition: HasAnthropicSecret
+    Properties:
+      RoleName:
+        Ref: ReportAggregatorExecutionRole
+      PolicyName: ReportAggregatorReadAnthropicSecret
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AnthropicSecretName}-??????
   ReportAggregatorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -1052,7 +1068,7 @@ Resources:
           Action:
           - sns:Publish
           Resource:
-            Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:*
+            Ref: NotificationTopic
   NotificationFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
