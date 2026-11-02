@@ -171,12 +171,15 @@ class DynamoStore:
     @staticmethod
     def observation_item(receipt):
         observed = timestamp(receipt["observed_at"])
+        # Pending receipts saved before content_id existed fall back to their row id.
+        observation_id = receipt.get("content_id") or receipt["observation_id"]
         return {
-            **{k: v for k, v in receipt.items() if k not in ("pk", "sk", "reason")},
+            **{k: v for k, v in receipt.items() if k not in ("pk", "sk", "reason", "content_id")},
+            "observation_id": observation_id,
             "pk": f"{pk(receipt['tenant_id'])}#P#{identifier(receipt['product_id'])}",
-            "sk": f"{receipt['source_id']}#{receipt['observed_at']}#{receipt['observation_id']}",
+            "sk": f"{receipt['source_id']}#{receipt['observed_at']}#{observation_id}",
             "gsi1pk": f"{pk(receipt['tenant_id'])}#DAY#{observed:%Y%m%d}",
-            "gsi1sk": f"{receipt['observed_at']}#{receipt['product_id']}#{receipt['source_id']}#{receipt['observation_id']}",
+            "gsi1sk": f"{receipt['observed_at']}#{receipt['product_id']}#{receipt['source_id']}#{observation_id}",
             "match_status": "confirmed",
         }
 
@@ -199,10 +202,10 @@ class DynamoStore:
                         }
                     },
                     {
+                        # No condition: another job may already hold this price point; last write wins.
                         "Put": {
                             "TableName": self.observations_name,
                             "Item": serialized(self.observation_item(receipt)),
-                            "ConditionExpression": "attribute_not_exists(pk)",
                         }
                     },
                 ]
@@ -243,7 +246,6 @@ class DynamoStore:
                         "Put": {
                             "TableName": self.observations_name,
                             "Item": serialized(self.observation_item(accepted)),
-                            "ConditionExpression": "attribute_not_exists(pk)",
                         }
                     },
                     {

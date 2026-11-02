@@ -35,6 +35,16 @@ def ingest(value, store, now):
             }
         return {"observation_id": row_id, "status": "rejected", "reason": str(exc)}
     receipt.update(normalized)
+    # The receipt tracks this job's row; content_id identifies the price point across jobs,
+    # so uploading the same data again overwrites one observation instead of adding another.
+    receipt["content_id"] = stable_id(
+        value["tenant_id"],
+        value["source_id"],
+        normalized["source_sku"],
+        normalized["observed_at"],
+        normalized["price_basis"],
+        normalized["price"],
+    )
     mapping = store.mapping(value["tenant_id"], value["source_id"], normalized["source_sku"])
     if mapping is None:
         receipt.update(status="pending", reason="sku_needs_confirmation")
