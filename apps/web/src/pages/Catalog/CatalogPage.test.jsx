@@ -58,6 +58,40 @@ describe('CatalogPage', () => {
     await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledWith('sku-1', { observation_id: 'obs1', product_id: 'sku-1', action: 'approve' }));
   });
 
+  const openOptions = async (sku) => {
+    fireEvent.click(within(row(sku)).getByRole('button', { name: /Duyệt/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('combobox'));
+    return dialog;
+  };
+
+  it('lists only real products after another SKU was approved', async () => {
+    render(<CatalogPage />);
+    await screen.findByText('SKU-2');
+    const dialog = await openOptions('SKU-2');
+    const combobox = within(dialog).getByRole('combobox');
+    fireEvent.change(combobox, { target: { value: 'Phone' } });
+    fireEvent.keyDown(combobox, { key: 'Enter', code: 'Enter', keyCode: 13 });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Ghép vào sản phẩm/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await openOptions('SKU-1');
+    expect(await screen.findByTitle('Phone (phone)')).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle('phone')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the product id when a product has no name', async () => {
+    marketDataApi.getProducts.mockResolvedValue({
+      data: [{ product_id: 'no-name', name: null, match_status: 'confirmed' }, structuredClone(products.data[1])],
+    });
+    render(<CatalogPage />);
+    await screen.findByText('SKU-1');
+    await openOptions('SKU-1');
+    expect(await screen.findByTitle('no-name')).toBeInTheDocument();
+    expect(screen.queryByText(/null|undefined/)).not.toBeInTheDocument();
+  });
+
   it('sends reject with the observation id and moves the row out of pending', async () => {
     render(<CatalogPage />);
     await screen.findByText('SKU-1');
