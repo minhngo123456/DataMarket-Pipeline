@@ -5,7 +5,7 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from marketdata.contracts import AccessDenied, identifier, iso, stable_id
+from marketdata.contracts import MAX_CSV_BYTES, AccessDenied, identifier, iso, stable_id
 from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok
@@ -35,6 +35,14 @@ def handle_csv_upload_url(
     source_id = body.get("source_id")
     if not source_id:
         return error("missing_source_id", "source_id is required", 400)
+
+    # Optional early check; a presigned PUT cannot cap the size, so CSVWorker still enforces it.
+    size_bytes = body.get("size_bytes")
+    if size_bytes is not None:
+        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
+            return error("invalid_size_bytes", "size_bytes must be a non-negative integer", 400)
+        if size_bytes > MAX_CSV_BYTES:
+            return error("csv_too_large", f"CSV must not exceed {MAX_CSV_BYTES} bytes", 413)
 
     source_id = identifier(source_id)
     source = store.source(auth.tenant_id, source_id)

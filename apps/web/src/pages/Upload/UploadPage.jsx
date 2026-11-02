@@ -6,7 +6,7 @@ import { PageHeading } from '../../components/PageHeading.jsx';
 import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
 import { mockSources } from '../../mocks/data.js';
 import { marketDataApi } from '../../services/marketDataApi.js';
-import { REQUIRED_COLUMNS, parseCsvPreview, validateCsvFile } from './csvPreview.js';
+import { MAX_CSV_ROWS, REQUIRED_COLUMNS, parseCsvPreview, validateCsvFile } from './csvPreview.js';
 
 const { Dragger } = Upload;
 const POLL_MS = 3000;
@@ -74,7 +74,7 @@ export function UploadPage() {
         setProgress(100);
         setJob({ job_id: 'job-sample', status: 'completed', row_count: preview.totalRows, counts: { accepted: preview.totalRows - 1, pending: 1, rejected: 0 } });
       } else {
-        const created = await marketDataApi.createUploadJob({ source_id: sourceId, filename: file.name });
+        const created = await marketDataApi.createUploadJob({ source_id: sourceId, filename: file.name, size_bytes: file.size });
         setProgress(20);
         // Presigned S3 URL: plain axios so the Cognito token is not sent to S3.
         await axios.put(created.upload_url, file, {
@@ -96,6 +96,7 @@ export function UploadPage() {
   };
 
   const [statusColor, statusLabel] = JOB_STATUS[job?.status] || ['default', job?.status];
+  const tooManyRows = (preview?.totalRows ?? 0) > MAX_CSV_ROWS;
   const columns = (preview?.fields || []).map((field) => ({ title: field, dataIndex: field, key: field, ellipsis: true }));
 
   return (
@@ -109,16 +110,17 @@ export function UploadPage() {
             <Select className="full-select" size="large" placeholder="Chọn nguồn dữ liệu" value={sourceId} onChange={setSourceId} loading={sources.loading}
               options={csvSources.map((s) => ({ value: s.source_id, label: s.name }))} notFoundContent="Chưa có nguồn CSV nào đang bật" />
 
-            <div className="form-section-heading upload-step-two"><span className="step-index">2</span><div><h2>Chọn tệp</h2><p>Chỉ nhận .csv, tối đa 10 MB, mã hóa UTF-8.</p></div></div>
+            <div className="form-section-heading upload-step-two"><span className="step-index">2</span><div><h2>Chọn tệp</h2><p>Chỉ nhận .csv, tối đa 1 MB và 1.000 dòng, mã hóa UTF-8.</p></div></div>
             <Dragger accept=".csv,text/csv" multiple={false} showUploadList={false} beforeUpload={selectFile} disabled={uploading}>
               <p className="upload-cloud"><InboxOutlined /></p>
               <p><strong>{file ? file.name : 'Kéo thả tệp CSV vào đây hoặc bấm để chọn'}</strong></p>
-              <p className="muted">{file ? `${(file.size / 1024).toFixed(0)} KB · ${preview?.totalRows ?? 0} dòng` : '.csv · tối đa 10 MB'}</p>
+              <p className="muted">{file ? `${(file.size / 1024).toFixed(0)} KB · ${preview?.totalRows ?? 0} dòng` : '.csv · tối đa 1 MB, 1.000 dòng'}</p>
             </Dragger>
 
             {preview && (
               <div className="csv-preview">
                 {preview.missing.length > 0 && <Alert type="error" showIcon title={`Thiếu cột bắt buộc: ${preview.missing.join(', ')}`} />}
+                {tooManyRows && <Alert type="error" showIcon title={`Tệp có ${preview.totalRows} dòng, vượt quá giới hạn ${MAX_CSV_ROWS} dòng. Hãy chia nhỏ tệp rồi tải lại.`} />}
                 <p className="muted">Xem trước 5 dòng đầu:</p>
                 <Table size="small" bordered columns={columns} dataSource={preview.rows.map((row, i) => ({ ...row, _key: i }))} rowKey="_key" pagination={false} scroll={{ x: true }} />
               </div>
@@ -126,7 +128,7 @@ export function UploadPage() {
             {progress > 0 && <Progress percent={progress} />}
             <div className="upload-footer">
               <Space>
-                <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading} disabled={!file || !sourceId || preview?.missing.length > 0} onClick={upload}>Tải lên</Button>
+                <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading} disabled={!file || !sourceId || preview?.missing.length > 0 || tooManyRows} onClick={upload}>Tải lên</Button>
                 {file && <Button onClick={reset} disabled={uploading}>Hủy</Button>}
               </Space>
             </div>

@@ -2,11 +2,21 @@
 
 import json
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from marketdata.contracts import AccessDenied, QuotaExceeded, identifier, iso
 from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
+
+
+def is_http_url(value) -> bool:
+    """Workers fetch this with urlopen, which also opens file:// and ftp://, so allow HTTP(S) only."""
+    try:
+        parsed = urlparse(value) if isinstance(value, str) else None
+        return bool(parsed and parsed.scheme in ("http", "https") and parsed.hostname)
+    except ValueError:
+        return False
 
 
 def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> dict:
@@ -61,6 +71,9 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
     endpoint = body.get("endpoint") or body.get("url")
     url = body.get("url") or body.get("endpoint")
     headers = body.get("headers")
+
+    if (endpoint and not is_http_url(endpoint)) or (url and not is_http_url(url)):
+        return error("invalid_source_payload", "endpoint/url must be an http(s) URL", 400)
 
     if headers is not None and not isinstance(headers, dict):
         return error(
@@ -160,6 +173,8 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
     if "endpoint" in body or "url" in body:
         new_endpoint = body.get("endpoint") or body.get("url")
         new_url = body.get("url") or body.get("endpoint")
+        if (new_endpoint and not is_http_url(new_endpoint)) or (new_url and not is_http_url(new_url)):
+            return error("invalid_source_payload", "endpoint/url must be an http(s) URL", 400)
         if new_endpoint:
             updated["endpoint"] = str(new_endpoint)
         if new_url:

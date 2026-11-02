@@ -1,7 +1,11 @@
 """Integration and unit tests for API Lambda, RBAC, and Quota enforcement."""
 
 import json
+from pathlib import Path
 
+from boto3.dynamodb.conditions import Key
+
+from marketdata.contracts import MAX_CSV_BYTES, MAX_CSV_ROWS
 from services.api.app import handler
 from tests.test_access import add_user
 
@@ -140,6 +144,56 @@ def test_source_quota_limit_3_sources(store):
     assert resp["statusCode"] == 429
     data = json.loads(resp["body"])
     assert data["error"]["code"] == "quota_exceeded"
+
+
+def test_csv_upload_rejects_oversized_file_before_creating_job(store, monkeypatch):
+    monkeypatch.setenv("RAW_BUCKET", "raw-bucket-test")
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+
+    def job_count():
+        return store.control.query(
+            KeyConditionExpression=Key("pk").eq("T#tenant-a") & Key("sk").begins_with("JOB#")
+        )["Count"]
+
+    before = job_count()
+    too_big = make_event(
+        "POST", "/jobs", user_id="analyst-a", body={"source_id": "vendor", "size_bytes": MAX_CSV_BYTES + 1}
+    )
+    resp = handler(too_big, store=store)
+    assert resp["statusCode"] == 413
+    assert json.loads(resp["body"])["error"]["code"] == "csv_too_large"
+    assert job_count() == before
+
+    invalid = make_event("POST", "/jobs", user_id="analyst-a", body={"source_id": "vendor", "size_bytes": "big"})
+    assert handler(invalid, store=store)["statusCode"] == 400
+
+    at_limit = make_event(
+        "POST", "/jobs", user_id="analyst-a", body={"source_id": "vendor", "size_bytes": MAX_CSV_BYTES}
+    )
+    assert handler(at_limit, store=store)["statusCode"] == 201
+
+
+def test_web_csv_limits_match_backend():
+    source = (Path(__file__).parents[1] / "apps/web/src/pages/Upload/csvPreview.js").read_text(encoding="utf-8")
+    assert MAX_CSV_BYTES == 1024 * 1024
+    assert "MAX_UPLOAD_BYTES = 1024 * 1024" in source
+    assert f"MAX_CSV_ROWS = {MAX_CSV_ROWS}" in source
+
+
+def test_source_url_must_be_http(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+    for bad in ("file:///proc/self/environ", "ftp://host/x", "not-a-url", "http://[bad"):
+        created = make_event(
+            "POST", "/sources", user_id="admin-a", body={"source_id": "feed", "kind": "api", "endpoint": bad}
+        )
+        assert handler(created, store=store)["statusCode"] == 400
+        patched = make_event("PATCH", "/sources/vendor", user_id="admin-a", body={"url": bad})
+        assert handler(patched, store=store)["statusCode"] == 400
+
+    good = make_event(
+        "POST", "/sources", user_id="admin-a", body={"source_id": "feed", "kind": "api", "endpoint": "https://a.vn/p"}
+    )
+    assert handler(good, store=store)["statusCode"] == 201
 
 
 def test_csv_upload_url_generation(store, monkeypatch):
