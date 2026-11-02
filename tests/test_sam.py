@@ -75,3 +75,29 @@ def test_aggregator_invokes_notification_lambda():
     assert invokes == [
         {"Effect": "Allow", "Action": ["lambda:InvokeFunction"], "Resource": {"Fn::GetAtt": ["NotificationFunction", "Arn"]}}
     ]
+
+
+def role_statements(resources, role):
+    return [s for p in resources[role]["Properties"]["Policies"] for s in p["PolicyDocument"]["Statement"]]
+
+
+def test_sns_publish_is_scoped_to_notification_topic():
+    resources = translate()["Resources"]
+    for role in ("ReportAggregatorExecutionRole", "NotificationFunctionRole"):
+        publishes = [s for s in role_statements(resources, role) if "sns:Publish" in s["Action"]]
+        assert len(publishes) == 1
+        assert publishes[0]["Resource"] == {"Ref": "NotificationTopic"}
+
+
+def test_secret_access_is_scoped_and_conditional():
+    template = translate()
+    resources = template["Resources"]
+    assert not any("secretsmanager:GetSecretValue" in s["Action"] for s in role_statements(resources, "ReportAggregatorExecutionRole"))
+    policy = resources["ReportAggregatorSecretPolicy"]
+    assert policy["Condition"] == "HasAnthropicSecret"
+    assert policy["Properties"]["RoleName"] == {"Ref": "ReportAggregatorExecutionRole"}
+    statements = policy["Properties"]["PolicyDocument"]["Statement"]
+    assert len(statements) == 1
+    assert statements[0]["Action"] == ["secretsmanager:GetSecretValue"]
+    assert statements[0]["Resource"]["Fn::Sub"].endswith(":secret:${AnthropicSecretName}-??????")
+    assert template["Conditions"]["HasAnthropicSecret"] == {"Fn::Not": [{"Fn::Equals": [{"Ref": "AnthropicSecretName"}, ""]}]}
