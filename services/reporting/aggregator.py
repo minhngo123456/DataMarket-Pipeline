@@ -13,6 +13,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import boto3
+from botocore.exceptions import ClientError
 
 from marketdata.contracts import iso, stable_id, timestamp
 from marketdata.queries import price_matrix
@@ -89,12 +90,17 @@ def process_report_job(
             tenant_id,
             period,
         )
-        store.update_job(tenant_id, job_id, status="completed", report_id=report_id)
+        complete_job(store, tenant_id, job_id, report_id)
+        # A retry can land here after a crash before the notify step; per-channel dedup stops repeats.
+        notification_result = trigger_notification(
+            tenant_id, report_id, period, existing_report.get("summary") or "", store, lambda_client=lambda_client
+        )
         return {
             "tenant_id": tenant_id,
             "report_id": report_id,
             "status": "completed",
             "reused": True,
+            "notification": notification_result,
         }
 
     # Record daily lock if not already recorded (e.g. if invoked by scheduled dispatcher)
@@ -152,7 +158,7 @@ def process_report_job(
     )
 
     # Update job status
-    store.update_job(tenant_id, job_id, status="completed", report_id=report_id)
+    complete_job(store, tenant_id, job_id, report_id)
 
     # 6. Trigger tenant notification (SNS / Slack) after the report is stored
     notification_result = trigger_notification(
@@ -165,6 +171,16 @@ def process_report_job(
         "status": "completed",
         "notification": notification_result,
     }
+
+
+def complete_job(store: DynamoStore, tenant_id: str, job_id: str, report_id: str) -> None:
+    """Mark the job done; a missing job record must not send a stored report to the DLQ."""
+    try:
+        store.update_job(tenant_id, job_id, status="completed", report_id=report_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        logger.warning("Job record %s missing for tenant %s; report %s is stored.", job_id, tenant_id, report_id)
 
 
 def trigger_notification(
