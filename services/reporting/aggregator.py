@@ -30,6 +30,7 @@ def process_report_job(
     s3_client=None,
     reports_bucket: str | None = None,
     claude_client=None,
+    lambda_client=None,
 ) -> dict:
     """Process a single report job for a tenant."""
     tenant_id = message_body["tenant_id"]
@@ -153,13 +154,9 @@ def process_report_job(
     # Update job status
     store.update_job(tenant_id, job_id, status="completed", report_id=report_id)
 
-    # 6. Trigger tenant notification (SNS / Slack)
-    notification_result = dispatch_notification(
-        tenant_id=tenant_id,
-        report_id=report_id,
-        period=period,
-        summary_text=ai_result.get("text"),
-        store=store,
+    # 6. Trigger tenant notification (SNS / Slack) after the report is stored
+    notification_result = trigger_notification(
+        tenant_id, report_id, period, ai_result.get("text") or "", store, lambda_client=lambda_client
     )
 
     return {
@@ -168,6 +165,28 @@ def process_report_job(
         "status": "completed",
         "notification": notification_result,
     }
+
+
+def trigger_notification(
+    tenant_id: str, report_id: str, period: str, summary: str, store: DynamoStore, lambda_client=None
+) -> dict:
+    """Hand the stored report to the Notification Lambda, or notify in-process when none is set."""
+    function_name = os.environ.get("NOTIFICATION_FUNCTION_NAME")
+    if function_name:
+        payload = {"tenant_id": tenant_id, "report_id": report_id, "period": period, "summary": summary[:20000]}
+        try:
+            client = lambda_client or boto3.client("lambda")
+            client.invoke(
+                FunctionName=function_name,
+                InvocationType="Event",
+                Payload=json.dumps(payload).encode("utf-8"),
+            )
+            return {"status": "queued", "function": function_name}
+        except Exception as exc:
+            logger.warning("Notification Lambda invoke failed for %s/%s: %s", tenant_id, report_id, exc)
+    return dispatch_notification(
+        tenant_id=tenant_id, report_id=report_id, period=period, summary_text=summary, store=store
+    )
 
 
 def handler(event: dict, context=None, store: DynamoStore | None = None) -> dict:

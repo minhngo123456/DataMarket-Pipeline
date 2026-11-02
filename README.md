@@ -1,6 +1,6 @@
 # MarketData Pipeline
 
-> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng, CSV worker tham chiếu, API/Web workers của Hướng, API nghiệp vụ của Hiếu (đã gắn vào SAM) và giao diện web của Minh. Bộ kiểm thử giả lập AWS chạy local; chưa triển khai AWS thật. Aggregator đã là Lambda đọc ReportQueue (gửi Slack qua webhook nếu tenant cấu hình; SNS topic chưa có trong template). Key Claude truyền qua tham số `AnthropicApiKey`; để trống thì báo cáo dùng bản tóm tắt số liệu dự phòng.
+> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng, CSV worker tham chiếu, API/Web workers của Hướng, API nghiệp vụ của Hiếu (đã gắn vào SAM) và giao diện web của Minh. Bộ kiểm thử giả lập AWS chạy local; chưa triển khai AWS thật. Aggregator đã là Lambda đọc ReportQueue; sau khi lưu báo cáo, nó gọi bất đồng bộ Notification Lambda để gửi email qua SNS và Slack qua webhook nếu tenant cấu hình. Stack dùng một SNS topic chung; mỗi tin có thuộc tính `tenant_id` và email phải đăng ký bằng `python -m scripts.subscribe_tenant_email` để có filter policy theo tenant, không đăng ký trực tiếp trên console. Key Claude truyền qua tham số `AnthropicApiKey`; để trống thì báo cáo dùng bản tóm tắt số liệu dự phòng.
 
 MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 

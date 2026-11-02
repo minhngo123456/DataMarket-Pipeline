@@ -38,15 +38,21 @@ def send_slack_webhook(webhook_url: str, text: str, tenant_id: str, period: str)
         return False
 
 
-def send_sns_notification(topic_arn: str, subject: str, message: str, sns_client=None) -> bool:
-    """Publish notification message to AWS SNS topic."""
+def send_sns_notification(
+    topic_arn: str, subject: str, message: str, sns_client=None, tenant_id: str | None = None
+) -> bool:
+    """Publish notification message to AWS SNS topic.
+
+    The stack uses one shared topic, so every message carries a ``tenant_id`` attribute.
+    Email subscriptions must use a filter policy on that attribute (see
+    ``scripts/subscribe_tenant_email.py``) so a tenant only receives its own reports.
+    """
     sns = sns_client or boto3.client("sns")
+    kwargs = {"TopicArn": topic_arn, "Subject": subject[:100], "Message": message}
+    if tenant_id:
+        kwargs["MessageAttributes"] = {"tenant_id": {"DataType": "String", "StringValue": tenant_id}}
     try:
-        sns.publish(
-            TopicArn=topic_arn,
-            Subject=subject[:100],
-            Message=message,
-        )
+        sns.publish(**kwargs)
         return True
     except Exception as exc:
         logger.warning("SNS publish failed for topic %s: %s", topic_arn, exc)
@@ -115,7 +121,9 @@ def dispatch_notification(
     # 1. AWS SNS Topic: only send if enabled and not already delivered
     if sns_topic:
         if not sns_already_sent:
-            if send_sns_notification(sns_topic, subject, digest_body, sns_client=sns_client):
+            if send_sns_notification(
+                sns_topic, subject, digest_body, sns_client=sns_client, tenant_id=tenant_id
+            ):
                 sns_sent = True
                 sns_error = None
             else:
@@ -194,4 +202,7 @@ def handler(event: dict, context=None, store: DynamoStore | None = None) -> dict
         return {"statusCode": 400, "error": "tenant_id and report_id required"}
 
     result = dispatch_notification(tenant_id, report_id, period, summary, store)
+    if result["status"] in ("failed", "partial"):
+        # Async invocations are retried by Lambda; channels already sent are skipped.
+        raise RuntimeError(f"notification {result['status']} for {tenant_id}/{report_id}")
     return {"statusCode": 200, "result": result}
