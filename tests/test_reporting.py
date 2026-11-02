@@ -7,6 +7,7 @@ import boto3
 
 from marketdata.contracts import iso
 from services.api.app import handler
+from services.reporting.aggregator import handler as aggregator_handler
 from services.reporting.aggregator import process_report_job
 from services.reporting.claude_client import ClaudeClient
 from tests.conftest import NOW
@@ -273,3 +274,60 @@ def test_aggregator_reuses_cached_report_without_calling_ai(store, monkeypatch):
     assert result["status"] == "completed"
     assert result["reused"] is True
     assert store.get("tenant-a", "JOB#report-job-cached")["status"] == "completed"
+
+
+def test_missing_job_record_does_not_send_report_to_dlq(store, monkeypatch):
+    # Regression: a manual trigger enqueued a report without JOB#, so every retry failed
+    # after the report was already stored and the message ended up in ReportQueueDLQ.
+    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
+    monkeypatch.delenv("SNS_TOPIC_ARN", raising=False)
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    body = {
+        "schema_version": 1,
+        "tenant_id": "tenant-a",
+        "source_id": "report",
+        "job_id": "job-never-created",
+        "kind": "report",
+        "scheduled_at": iso(NOW),
+    }
+
+    class StubClaudeClient:
+        def generate_report_summary(self, summary_data):
+            return {"status": "ai_generated", "text": "Summary"}
+
+    first = process_report_job(body, store, reports_bucket="", claude_client=StubClaudeClient())
+    assert first["status"] == "completed"
+    assert store.get("tenant-a", "REPORT#" + first["report_id"])["status"] == "ready"
+    assert store.get("tenant-a", "JOB#job-never-created") is None
+
+    retried = aggregator_handler({"Records": [{"messageId": "m1", "body": json.dumps(body)}]}, store=store)
+    assert retried == {"batchItemFailures": []}
+
+
+def test_retry_with_stored_report_still_notifies(store, monkeypatch):
+    monkeypatch.setenv("NOTIFICATION_FUNCTION_NAME", "notify-fn")
+    period = "2026-10-19"
+    from marketdata.contracts import stable_id
+    report_id = stable_id("tenant-a", period)
+    store.put(
+        "tenant-a",
+        "REPORT#" + report_id,
+        {"report_id": report_id, "period": period, "status": "ready", "ai_status": "ai_generated", "summary": "Stored"},
+    )
+
+    class RecordingLambda:
+        calls = []
+
+        def invoke(self, **kwargs):
+            self.calls.append(json.loads(kwargs["Payload"]))
+
+    result = process_report_job(
+        {"tenant_id": "tenant-a", "job_id": "job-retry", "scheduled_at": iso(NOW)},
+        store,
+        lambda_client=RecordingLambda(),
+    )
+
+    assert result["reused"] is True
+    assert RecordingLambda.calls == [
+        {"tenant_id": "tenant-a", "report_id": report_id, "period": period, "summary": "Stored"}
+    ]
