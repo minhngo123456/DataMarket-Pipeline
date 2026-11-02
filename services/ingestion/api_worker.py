@@ -13,6 +13,7 @@ from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
+from services.ingestion.safe_http import open_public
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -25,7 +26,7 @@ TIMEOUT_SECONDS = 10
 def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
     req = urllib.request.Request(url, headers=headers or {"User-Agent": "MarketDataPipeline/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with open_public(req, timeout=timeout) as response:
             data = response.read(MAX_BYTES + 1)
             if len(data) > MAX_BYTES:
                 raise InvalidRecord("api_response_exceeds_1_mib")
