@@ -1075,6 +1075,7 @@ Resources:
       Environment:
         Variables:
           CONTROL_TABLE: *id001
+          OBSERVATIONS_TABLE: *id002
           SNS_TOPIC_ARN:
             Ref: NotificationTopic
       Policies:
