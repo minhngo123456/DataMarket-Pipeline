@@ -24,6 +24,8 @@ pnpm build
 | `VITE_ENABLE_MOCK_DATA` | `true` shows labelled sample data when the API cannot be reached. Always on under `pnpm dev`; keep `false` for deployed builds. |
 | `VITE_MOCK_ROLE` | Role of the sample profile (`admin`, `analyst`, `viewer`) to test permissions locally. |
 
+For a deployed build, generate `.env.production` from the stack instead of copying values by hand; see "Đưa web lên AWS" in [infra/aws/README.md](../../infra/aws/README.md).
+
 Self sign-up is hidden: the user pool only allows admins to create accounts.
 
 ## Pages

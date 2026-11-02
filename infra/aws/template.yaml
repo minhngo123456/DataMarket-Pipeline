@@ -7,6 +7,10 @@ Parameters:
     Type: String
     Default: http://localhost:5173
     Description: Exact browser origin; update when frontend is deployed.
+  LocalDevOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Second allowed browser origin for local development. Set it equal to WebOrigin to allow only one origin.
   ScheduleState:
     Type: String
     Default: DISABLED
@@ -36,6 +40,10 @@ Conditions:
     Fn::Equals:
     - Ref: EnableCloudFront
     - ENABLED
+  SingleWebOrigin:
+    Fn::Equals:
+    - Ref: WebOrigin
+    - Ref: LocalDevOrigin
   HasAnthropicSecret:
     Fn::Not:
     - Fn::Equals:
@@ -144,7 +152,11 @@ Resources:
           AllowedMethods:
           - PUT
           AllowedOrigins:
-          - Ref: WebOrigin
+            Fn::If:
+            - SingleWebOrigin
+            - - Ref: WebOrigin
+            - - Ref: WebOrigin
+              - Ref: LocalDevOrigin
           MaxAge: 300
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -854,7 +866,11 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
-        - Ref: WebOrigin
+          Fn::If:
+          - SingleWebOrigin
+          - - Ref: WebOrigin
+          - - Ref: WebOrigin
+            - Ref: LocalDevOrigin
         AllowMethods:
         - GET
         - POST
@@ -1349,6 +1365,16 @@ Resources:
       DistributionConfig:
         Enabled: true
         DefaultRootObject: index.html
+        # React routes have no S3 object, and a private bucket answers 403 for them.
+        CustomErrorResponses:
+        - ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+          ErrorCachingMinTTL: 0
         HttpVersion: http2
         IPV6Enabled: true
         PriceClass: PriceClass_100
@@ -1773,6 +1799,10 @@ Outputs:
     Condition: UseCloudFront
     Value:
       Fn::Sub: https://${WebDistribution.DomainName}
+  WebDistributionId:
+    Condition: UseCloudFront
+    Value:
+      Ref: WebDistribution
   ApiDataPolicyArn:
     Value:
       Ref: ApiDataPolicy

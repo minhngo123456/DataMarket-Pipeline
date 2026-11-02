@@ -77,6 +77,38 @@ def test_aggregator_invokes_notification_lambda():
     ]
 
 
+def test_api_and_raw_bucket_cors_allow_web_and_local_origins_without_duplicates():
+    template = translate()
+    resources = template["Resources"]
+    expected = {
+        "Fn::If": [
+            "SingleWebOrigin",
+            [{"Ref": "WebOrigin"}],
+            [{"Ref": "WebOrigin"}, {"Ref": "LocalDevOrigin"}],
+        ]
+    }
+    assert resources["HttpApi"]["Properties"]["CorsConfiguration"]["AllowOrigins"] == expected
+    rules = resources["RawBucket"]["Properties"]["CorsConfiguration"]["CorsRules"]
+    assert [rule["AllowedOrigins"] for rule in rules] == [expected]
+    assert template["Conditions"]["SingleWebOrigin"] == {
+        "Fn::Equals": [{"Ref": "WebOrigin"}, {"Ref": "LocalDevOrigin"}]
+    }
+    assert template["Parameters"]["LocalDevOrigin"]["Default"] == "http://localhost:5173"
+
+
+def test_cloudfront_serves_index_for_react_routes():
+    template = translate()
+    config = template["Resources"]["WebDistribution"]["Properties"]["DistributionConfig"]
+    assert config["CustomErrorResponses"] == [
+        {"ErrorCode": code, "ResponseCode": 200, "ResponsePagePath": "/index.html", "ErrorCachingMinTTL": 0}
+        for code in (403, 404)
+    ]
+    assert template["Outputs"]["WebDistributionId"] == {
+        "Condition": "UseCloudFront",
+        "Value": {"Ref": "WebDistribution"},
+    }
+
+
 def role_statements(resources, role):
     return [s for p in resources[role]["Properties"]["Policies"] for s in p["PolicyDocument"]["Statement"]]
 
