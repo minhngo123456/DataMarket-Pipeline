@@ -199,6 +199,74 @@ def test_sources_patch_and_delete(store):
     assert json.loads(del_resp["body"])["status"] == "deleted"
 
 
+def test_sources_with_endpoint_url_and_headers(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+
+    # 1. POST API source with endpoint and headers
+    api_payload = {
+        "source_id": "api-supplier",
+        "name": "Supplier API",
+        "kind": "api",
+        "endpoint": "https://api.partner.com/v1/prices",
+        "headers": {"Authorization": "Bearer secret123", "User-Agent": "MarketData/1.0"},
+    }
+    resp = handler(make_event("POST", "/sources", user_id="admin-a", body=api_payload), store=store)
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    assert body["endpoint"] == "https://api.partner.com/v1/prices"
+    assert body["url"] == "https://api.partner.com/v1/prices"
+    assert body["headers"]["Authorization"] == "Bearer secret123"
+
+    # 2. POST WEB source with url
+    web_payload = {
+        "source_id": "web-competitor",
+        "name": "Competitor Web",
+        "kind": "web",
+        "url": "https://competitor.com/prices",
+    }
+    resp = handler(make_event("POST", "/sources", user_id="admin-a", body=web_payload), store=store)
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    assert body["url"] == "https://competitor.com/prices"
+    assert body["endpoint"] == "https://competitor.com/prices"
+
+    # 3. GET /sources returns endpoint, url, headers
+    get_resp = handler(make_event("GET", "/sources", user_id="admin-a"), store=store)
+    assert get_resp["statusCode"] == 200
+    sources = json.loads(get_resp["body"])["data"]
+    s_api = next(s for s in sources if s["source_id"] == "api-supplier")
+    assert s_api["endpoint"] == "https://api.partner.com/v1/prices"
+    assert s_api["headers"] == {"Authorization": "Bearer secret123", "User-Agent": "MarketData/1.0"}
+    s_web = next(s for s in sources if s["source_id"] == "web-competitor")
+    assert s_web["url"] == "https://competitor.com/prices"
+
+    # 4. PATCH /sources/:id updates endpoint and headers
+    patch_payload = {
+        "endpoint": "https://api.partner.com/v2/new-prices",
+        "headers": {"Authorization": "Bearer updated_token"},
+    }
+    patch_resp = handler(
+        make_event("PATCH", "/sources/api-supplier", user_id="admin-a", body=patch_payload),
+        store=store,
+    )
+    assert patch_resp["statusCode"] == 200
+    patched_body = json.loads(patch_resp["body"])
+    assert patched_body["endpoint"] == "https://api.partner.com/v2/new-prices"
+    assert patched_body["headers"]["Authorization"] == "Bearer updated_token"
+
+    stored = store.get("tenant-a", "SOURCE#api-supplier")
+    assert stored["endpoint"] == "https://api.partner.com/v2/new-prices"
+    assert stored["url"] == "https://api.partner.com/v2/new-prices"
+    assert stored["headers"] == {"Authorization": "Bearer updated_token"}
+
+    # 5. Invalid headers rejected with 400
+    bad_headers_resp = handler(
+        make_event("POST", "/sources", user_id="admin-a", body={"source_id": "bad-src", "kind": "api", "headers": "not-a-dict"}),
+        store=store,
+    )
+    assert bad_headers_resp["statusCode"] == 400
+
+
 def test_members_management_and_quota(store):
     add_user(store, "admin-a", "tenant-a", "admin")
 
