@@ -12,7 +12,7 @@ Template: `template.yaml`, Python 3.12, AWS SAM. Hạ tầng được mô tả b
 - CSVWorker, APIWorker, WebWorker và Normalizer: timeout 45 giây, partial batch response, IAM giới hạn theo tài nguyên/chức năng. Các extractor dùng batch 1; Normalizer dùng batch 10. Source mapping giới hạn concurrency 2.
 - Job Dispatcher mỗi 6 giờ và Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. Scheduler có retry và DLQ; lịch mặc định DISABLED.
 - Cognito user pool/client, HTTP API và JWT authorizer. `ApiFunction` (`services.api.app.handler`) đã được gắn vào 21 route của `docs/api-contract-frontend.md`, mọi route đều qua JWT authorizer; frontend đặt `VITE_API_URL` bằng output `HttpApiEndpoint` (stage `$default`, không có `/v1`). Cognito hiện chỉ cho admin tạo user.
-- CloudFront/S3 Web để Minh tải giao diện. S3 CORS và API CORS dùng đúng WebOrigin, mặc định http://localhost:5173.
+- CloudFront/S3 Web để Minh tải giao diện. S3 CORS và API CORS cho phép WebOrigin và LocalDevOrigin (cùng mặc định http://localhost:5173). Đặt LocalDevOrigin bằng WebOrigin để chỉ cho phép một origin.
 
 `ApiDataPolicyArn` là policy dữ liệu bàn giao cho Hiếu. Hạ tầng dùng chung nhiều tenant; policy giới hạn tài nguyên nhưng không tự cách ly dữ liệu theo người đăng nhập. Handler API phải kiểm tra JWT/membership/RBAC, worker đối chiếu source/job.
 
@@ -48,6 +48,29 @@ Thử luồng CSV: API của Hiếu tạo source và job phía máy chủ, cấp
 ReportAggregator đã đọc ReportQueue và gọi Notification trong cùng Lambda; API dùng USER_POOL_ID để tạo user Cognito khi mời thành viên. Còn thiếu SNS topic/subscription, Secrets Manager references theo tenant. APIWorker và WebWorker hiện đã được khai báo làm consumer của APIQueue/WebQueue. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
 
 Bucket và table có DeletionPolicy Retain để tránh mất dữ liệu khi xóa stack. Khi dọn sandbox, cần kiểm tra rồi xóa riêng tài nguyên còn giữ. CloudWatch/PITR/S3 có thể phát sinh chi phí sau khi triển khai; bản local không tạo tài nguyên AWS.
+
+## Đưa web lên AWS
+
+Các bước này chưa được chạy trên AWS thật. Cần tài khoản đã được AWS xác minh cho CloudFront ([mục 8.1](../../docs/aws-deploy-free-plan.md)); nếu chưa, bật CloudFront sẽ làm bản cập nhật stack rollback. Không mở public WebBucket để né lỗi này.
+
+1. Deploy với `EnableCloudFront=ENABLED`, các tham số khác giữ nguyên. Lấy output `WebUrl`, `WebDistributionId`, `WebBucket`.
+2. Deploy lần nữa với `WebOrigin=<WebUrl>` (không có dấu `/` cuối). `LocalDevOrigin` vẫn giữ `http://localhost:5173`, nên web chạy local không bị cắt.
+3. Build và tải lên, từ thư mục gốc:
+
+```powershell
+python -m scripts.build_web_env --stack marketdata-dev --region ap-southeast-1 --profile marketdata-dev
+cd apps/web
+pnpm build
+aws s3 sync dist "s3://<WebBucket>" --delete --profile marketdata-dev --region ap-southeast-1
+aws cloudfront create-invalidation --distribution-id <WebDistributionId> --paths "/*" --profile marketdata-dev
+```
+
+`--delete` xóa khỏi bucket những file không còn trong `dist`, nên kiểm tra đúng tên bucket trước khi chạy. Chạy lại bước 3 mỗi khi đổi giao diện; không có invalidation thì `index.html` cũ có thể còn trong cache CloudFront.
+
+4. Trên Windows, kiểm tra file `.js` được tải lên với `Content-Type` dạng JavaScript, vì `aws s3 sync` đoán kiểu theo cấu hình máy. Sai kiểu thì trình duyệt không chạy được script.
+5. Mở `WebUrl`: đăng nhập, tải lại một trang sâu như `/dashboard` (phải vào được trang, không báo 403), upload CSV và tạo báo cáo.
+
+CloudFront trả `index.html` với mã 200 cho mọi lỗi 403/404, nên đường dẫn file không tồn tại cũng ra trang web chứ không báo lỗi.
 
 ## Kiểm tra sau deploy
 
