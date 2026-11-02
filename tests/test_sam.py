@@ -65,6 +65,20 @@ def test_http_api_routes_reach_api_function_with_jwt():
     assert resources["ApiFunction"]["Properties"]["Handler"] == "services.api.app.handler"
 
 
+def test_every_function_using_the_store_has_both_tables():
+    # DynamoStore() reads both names from the environment, even when a handler only uses one table.
+    resources = translate()["Resources"]
+    functions = {
+        name: resource["Properties"]["Environment"]["Variables"]
+        for name, resource in resources.items()
+        if resource["Type"] == "AWS::Lambda::Function" and "Environment" in resource["Properties"]
+    }
+    assert "NotificationFunction" in functions
+    for name, variables in functions.items():
+        if "CONTROL_TABLE" in variables:
+            assert "OBSERVATIONS_TABLE" in variables, name
+
+
 def test_aggregator_invokes_notification_lambda():
     resources = translate()["Resources"]
     env = resources["ReportAggregator"]["Properties"]["Environment"]["Variables"]
