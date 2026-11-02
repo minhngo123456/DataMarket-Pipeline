@@ -51,6 +51,11 @@ def stable_id(*parts):
     return hashlib.sha256("\x00".join(str(x) for x in parts).encode()).hexdigest()[:32]
 
 
+def observation_content_id(tenant_id, source_id, source_sku, observed_at, price_basis, price):
+    """Identify a price point across jobs. Fixed-point price so DynamoDB's number form cannot change the id."""
+    return stable_id(tenant_id, source_id, source_sku, observed_at, price_basis, format(price, "f"))
+
+
 def envelope(value):
     if (
         not isinstance(value, dict)
