@@ -1,0 +1,9 @@
+{
+  "data": [
+    { "source_sku": "IP15-128", "price": 19590000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
+    { "source_sku": "IP15-256", "price": 22790000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
+    { "source_sku": "S24-256", "price": 18190000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
+    { "source_sku": "MBA-M3", "price": 26790000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
+    { "source_sku": "AIRPODS-PRO2", "price": 5390000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" }
+  ]
+}
