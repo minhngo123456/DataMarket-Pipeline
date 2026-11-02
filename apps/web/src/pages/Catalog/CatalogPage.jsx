@@ -37,7 +37,8 @@ export function CatalogPage() {
     () => Object.fromEntries((sources.data?.data || []).map((s) => [s.source_id, s.name || s.source_id])),
     [sources.data],
   );
-  const catalog = rows.filter((row) => row.match_status === 'confirmed');
+  // A SKU approved on this page also becomes 'confirmed' but is a price row, not a product.
+  const catalog = rows.filter((row) => row.match_status === 'confirmed' && !row.observation_id);
   const pendingCount = rows.filter((row) => row.match_status === 'pending').length;
 
   const filtered = useMemo(() => {
@@ -186,7 +187,7 @@ export function CatalogPage() {
           value={target}
           onChange={setTarget}
           optionFilterProp="label"
-          options={catalog.map((p) => ({ value: p.product_id, label: `${p.name} (${p.product_id})` }))}
+          options={catalog.map((p) => ({ value: p.product_id, label: p.name ? `${p.name} (${p.product_id})` : p.product_id }))}
           notFoundContent="Catalog chưa có sản phẩm"
         />
         <Button type="link" icon={<PlusOutlined />} onClick={() => setNewProduct({ product_id: productIdFromSku(approving?.source_sku), name: approving?.source_sku || '' })}>Tạo sản phẩm mới</Button>
