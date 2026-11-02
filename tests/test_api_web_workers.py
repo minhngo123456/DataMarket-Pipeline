@@ -428,9 +428,18 @@ def test_html_parser_normalizes_common_header_aliases_and_rejects_empty_fields()
             "source_sku": "ABC-01",
             "price": "120000",
             "currency": "VND",
-            "observed_at": "2026-10-19T00:45:00Z",
+            "observed_at": "2026-10-19T00:45:00.000000Z",
         }
     ]
 
-    with pytest.raises(InvalidRecord, match="empty_required_html_field"):
-        parse_html_payload(b'<div data-sku="ABC-01" data-price="120000"></div>')
+    assert parse_html_payload(
+        b'<div data-sku="ABC-01" data-price="120000"></div>',
+        observed_at=NOW.isoformat(),
+    ) == [
+        {
+            "source_sku": "ABC-01",
+            "price": "120000",
+            "currency": "VND",
+            "observed_at": "2026-10-19T01:00:00.000000Z",
+        }
+    ]

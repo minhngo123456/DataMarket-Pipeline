@@ -17,7 +17,7 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
    - Xử lý job từ `APIQueue`.
    - Thu thập dữ liệu JSON từ REST API endpoint cấu hình trong Source.
    - Bóc tách danh sách sản phẩm, kiểm tra các trường bắt buộc (`source_sku`, `price`, `currency`, `observed_at`).
-   - Lỗi 429, timeout, HTTP 408 và 5xx được thử lại với backoff tăng dần có giới hạn; tôn trọng `Retry-After`.
+   - Lỗi 429, timeout, HTTP 408/5xx và lỗi worker ngoài dự kiến được thử lại với backoff tăng dần có giới hạn; tôn trọng `Retry-After`.
    - Lỗi xác thực, HTTP 4xx khác và payload sai được đánh dấu job `failed`; SQS chuyển lỗi retry quá số lần vào DLQ.
    - Consumer Lambda được nối với `APIQueue` trong SAM, bật partial batch response.
    - Đẩy các dòng vào `TransformQueue` cho Normalizer.
@@ -26,8 +26,9 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
    - Xử lý job từ `WebQueue`.
    - Thu thập HTML tĩnh được phép qua HTTP.
    - Bóc tách bảng dữ liệu giá hoặc thẻ sản phẩm có `data-*` attribute bằng bộ phân tích chuẩn `HTMLTablePriceParser`.
+   - Nhận dạng một số tên cột SKU/giá tiếng Việt và tiếng Anh; ưu tiên giá khuyến mãi khi đang áp dụng, chuẩn hóa cách ghi giá phổ biến và dùng thời điểm job thu thập nếu nguồn không có thời điểm.
    - Kiểm tra giới hạn dung lượng, số dòng và cô lập tenant.
-   - Lỗi 429, timeout, HTTP 408 và 5xx được retry với backoff giới hạn; lỗi xác thực, HTTP 4xx khác và HTML sai được đánh dấu thất bại.
+   - Lỗi 429, timeout, HTTP 408/5xx và lỗi worker ngoài dự kiến được retry với backoff giới hạn; lỗi xác thực, HTTP 4xx khác và HTML sai được đánh dấu thất bại.
    - Đẩy các dòng vào `TransformQueue`.
    - Consumer Lambda được nối với `WebQueue` trong SAM, bật partial batch response.
 

@@ -131,11 +131,6 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
     except (InvalidRecord, AccessDenied) as exc:
         store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
         return
-    except Exception as exc:
-        store.update_job(
-            tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0
-        )
-        return
 
     values = [
         {
