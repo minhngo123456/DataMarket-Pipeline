@@ -3,13 +3,16 @@
 import json
 import logging
 import os
+import re
+import unicodedata
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 
 import boto3
 
-from marketdata.contracts import AccessDenied, InvalidRecord, identifier
+from marketdata.contracts import AccessDenied, InvalidRecord, identifier, iso, timestamp
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
@@ -18,7 +21,6 @@ from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_e
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-REQUIRED = {"source_sku", "price", "currency", "observed_at"}
 MAX_BYTES = 1024 * 1024
 TIMEOUT_SECONDS = 10
 
@@ -28,15 +30,49 @@ HEADER_MAPPING = {
     "product_sku": "source_sku",
     "item_sku": "source_sku",
     "mã_sku": "source_sku",
+    "mã_sản_phẩm": "source_sku",
+    "ma_sku": "source_sku",
+    "ma_san_pham": "source_sku",
     "product_code": "source_sku",
+    "ma_hang": "source_sku",
+    "mã_hàng": "source_sku",
     "price": "price",
     "giá": "price",
+    "gia": "price",
+    "giá_bán": "price",
+    "gia_ban": "price",
     "don_gia": "price",
     "unit_price": "price",
+    "current_price": "price",
+    "final_price": "price",
+    "sale_price": "sale_price",
+    "discount_price": "sale_price",
+    "promotional_price": "sale_price",
+    "promotion_price": "sale_price",
+    "giá_khuyến_mãi": "sale_price",
+    "gia_khuyen_mai": "sale_price",
+    "giá_ưu_đãi": "sale_price",
+    "gia_uu_dai": "sale_price",
+    "giá_sau_giảm": "sale_price",
+    "gia_sau_giam": "sale_price",
+    "regular_price": "regular_price",
+    "original_price": "regular_price",
+    "list_price": "regular_price",
+    "old_price": "regular_price",
+    "giá_gốc": "regular_price",
+    "gia_goc": "regular_price",
+    "giá_niêm_yết": "regular_price",
+    "gia_niem_yet": "regular_price",
+    "promotion_active": "promotion_active",
+    "promo_active": "promotion_active",
+    "discount_active": "promotion_active",
+    "khuyến_mãi_đang_áp_dụng": "promotion_active",
+    "khuyen_mai_dang_ap_dung": "promotion_active",
     "currency": "currency",
     "tiền_tệ": "currency",
     "tien_te": "currency",
     "đơn_vị": "currency",
+    "don_vi": "currency",
     "observed_at": "observed_at",
     "thời_điểm": "observed_at",
     "thoi_diem": "observed_at",
@@ -44,6 +80,114 @@ HEADER_MAPPING = {
     "timestamp": "observed_at",
     "price_basis": "price_basis",
 }
+
+_INACTIVE_PROMOTION_VALUES = {
+    "0",
+    "false",
+    "no",
+    "n",
+    "inactive",
+    "expired",
+    "không",
+    "khong",
+    "không áp dụng",
+    "khong ap dung",
+    "hết hạn",
+    "het han",
+    "not active",
+    "no promotion",
+}
+_EMPTY_PRICE_VALUES = {"", "-", "—", "–", "n/a", "na", "không có", "khong co"}
+
+
+def _normalize_header(value):
+    normalized = unicodedata.normalize("NFKC", value).casefold().strip()
+    normalized = re.sub(r"\([^)]*\)|\[[^]]*\]", "", normalized)
+    normalized = re.sub(r"[*:]+$", "", normalized).strip()
+    return re.sub(r"[\s-]+", "_", normalized)
+
+
+def _grouped_integer_is_valid(value, separator):
+    groups = value.split(separator)
+    return (
+        len(groups) > 1
+        and 1 <= len(groups[0]) <= 3
+        and groups[0].isdigit()
+        and all(len(group) == 3 and group.isdigit() for group in groups[1:])
+    )
+
+
+def _normalize_price(value):
+    """Convert common displayed price formats to the Normalizer's decimal contract."""
+    price_text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    price_text = re.sub(r"(?i)(?:vnd|vnđ|usd|eur|gbp|đồng|₫)", "", price_text)
+    price_text = re.sub(r"(?i)^đ\s*|\s*đ$", "", price_text)
+    price_text = price_text.translate(str.maketrans("", "", "$€£¥"))
+    price_text = re.sub(r"[\s\u00a0\u202f]", "", price_text)
+    if not price_text or not re.fullmatch(r"[0-9.,]+", price_text):
+        raise InvalidRecord("invalid_html_price")
+
+    has_dot = "." in price_text
+    has_comma = "," in price_text
+    if has_dot and has_comma:
+        decimal_separator = "." if price_text.rfind(".") > price_text.rfind(",") else ","
+        thousands_separator = "," if decimal_separator == "." else "."
+        if price_text.count(decimal_separator) != 1:
+            raise InvalidRecord("invalid_html_price")
+        integer_part, decimal_part = price_text.rsplit(decimal_separator, 1)
+        if (
+            not decimal_part.isdigit()
+            or not 1 <= len(decimal_part) <= 2
+            or not _grouped_integer_is_valid(integer_part, thousands_separator)
+        ):
+            raise InvalidRecord("invalid_html_price")
+        price_text = integer_part.replace(thousands_separator, "") + "." + decimal_part
+    elif has_dot or has_comma:
+        separator = "." if has_dot else ","
+        parts = price_text.split(separator)
+        if len(parts) > 2:
+            if _grouped_integer_is_valid(price_text, separator):
+                price_text = price_text.replace(separator, "")
+            else:
+                integer_part, decimal_part = price_text.rsplit(separator, 1)
+                if (
+                    not decimal_part.isdigit()
+                    or not 1 <= len(decimal_part) <= 2
+                    or not _grouped_integer_is_valid(integer_part, separator)
+                ):
+                    raise InvalidRecord("invalid_html_price")
+                price_text = integer_part.replace(separator, "") + "." + decimal_part
+        else:
+            integer_part, tail = parts
+            if not integer_part.isdigit() or not tail.isdigit():
+                raise InvalidRecord("invalid_html_price")
+            if len(tail) == 3 and 1 <= len(integer_part) <= 3:
+                price_text = integer_part + tail
+            elif 1 <= len(tail) <= 2:
+                price_text = integer_part + "." + tail
+            else:
+                raise InvalidRecord("invalid_html_price")
+
+    if not re.fullmatch(r"\d{1,15}(?:\.\d{1,2})?", price_text):
+        raise InvalidRecord("invalid_html_price")
+    return price_text
+
+
+def _present_value(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.casefold() in _EMPTY_PRICE_VALUES:
+        return None
+    return text
+
+
+def _effective_price(row):
+    sale_price = _present_value(row.get("sale_price"))
+    promotion_active = str(row.get("promotion_active", "")).strip().casefold()
+    if sale_price and promotion_active not in _INACTIVE_PROMOTION_VALUES:
+        return sale_price
+    return _present_value(row.get("price")) or _present_value(row.get("regular_price"))
 
 
 class HTMLTablePriceParser(HTMLParser):
@@ -59,21 +203,35 @@ class HTMLTablePriceParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attr_dict = dict(attrs)
-        # Check if element itself has data attributes for price observation
-        if "data-sku" in attr_dict and "data-price" in attr_dict:
+        price_attributes = {
+            "data-price",
+            "data-current-price",
+            "data-sale-price",
+            "data-promo-price",
+            "data-original-price",
+            "data-list-price",
+        }
+        if "data-sku" in attr_dict and price_attributes.intersection(attr_dict):
             row = {
-                "source_sku": attr_dict["data-sku"].strip(),
-                "price": attr_dict["data-price"].strip(),
-                "currency": attr_dict.get("data-currency", "VND").strip().upper(),
-                "observed_at": attr_dict.get("data-observed-at", "").strip(),
+                "source_sku": attr_dict.get("data-sku", ""),
+                "price": attr_dict.get("data-price") or attr_dict.get("data-current-price"),
+                "sale_price": attr_dict.get("data-sale-price")
+                or attr_dict.get("data-promo-price"),
+                "regular_price": attr_dict.get("data-original-price")
+                or attr_dict.get("data-list-price"),
+                "promotion_active": attr_dict.get("data-promotion-active")
+                or attr_dict.get("data-sale-active"),
+                "currency": attr_dict.get("data-currency") or "VND",
+                "observed_at": attr_dict.get("data-observed-at"),
             }
             if "data-price-basis" in attr_dict:
-                row["price_basis"] = attr_dict["data-price-basis"].strip()
+                row["price_basis"] = attr_dict["data-price-basis"]
             self.rows.append(row)
             return
 
         if tag == "table":
             self._in_table = True
+            self._headers = []
         elif tag == "tr" and self._in_table:
             self._in_row = True
             self._current_row_cells = []
@@ -92,12 +250,15 @@ class HTMLTablePriceParser(HTMLParser):
             self._in_cell = False
         elif tag == "tr" and self._in_row:
             self._in_row = False
-            normalized_headers = [
-                c.casefold().strip().replace("-", "_").replace(" ", "_")
-                for c in self._current_row_cells
+            mapped_headers = [
+                HEADER_MAPPING.get(_normalize_header(cell), _normalize_header(cell))
+                for cell in self._current_row_cells
             ]
-            mapped_headers = [HEADER_MAPPING.get(c, c) for c in normalized_headers]
-            if not self._headers and REQUIRED <= set(mapped_headers):
+            has_product_key = "source_sku" in mapped_headers
+            has_price_column = any(
+                field in mapped_headers for field in ("price", "sale_price", "regular_price")
+            )
+            if not self._headers and has_product_key and has_price_column:
                 # Header row
                 self._headers = mapped_headers
             elif self._headers and len(self._current_row_cells) == len(self._headers):
@@ -105,6 +266,7 @@ class HTMLTablePriceParser(HTMLParser):
                 self.rows.append(row)
         elif tag == "table":
             self._in_table = False
+            self._headers = []
 
 
 def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
@@ -123,9 +285,11 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
         raise RetryableFetchError(f"web_connection_error_{exc}") from exc
 
 
-def parse_html_payload(data):
+def parse_html_payload(data, observed_at=None):
     if len(data) > MAX_BYTES:
         raise InvalidRecord("html_response_exceeds_1_mib")
+    captured_at = iso(timestamp(observed_at)) if observed_at is not None else None
+    fallback_observed_at = captured_at or iso(datetime.now(UTC))
     try:
         html_str = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -149,18 +313,25 @@ def parse_html_payload(data):
     for row in parser.rows:
         if "tenant_id" in row:
             raise InvalidRecord("tenant_not_allowed_in_record")
-        if not REQUIRED <= set(row.keys()):
+        source_sku = _present_value(row.get("source_sku"))
+        price_value = _effective_price(row)
+        if not source_sku or not price_value:
             raise InvalidRecord("missing_required_html_fields")
+        observed_value = captured_at or _present_value(row.get("observed_at")) or fallback_observed_at
+        try:
+            normalized_observed_at = iso(timestamp(observed_value))
+        except InvalidRecord as exc:
+            raise InvalidRecord("invalid_html_observed_at") from exc
         cleaned = {
-            "source_sku": str(row["source_sku"]).strip(),
-            "price": str(row["price"]).strip(),
-            "currency": str(row["currency"]).strip().upper(),
-            "observed_at": str(row["observed_at"]).strip(),
+            "source_sku": source_sku,
+            "price": _normalize_price(price_value),
+            "currency": str(_present_value(row.get("currency")) or "VND").upper(),
+            "observed_at": normalized_observed_at,
         }
-        if any(not value for value in cleaned.values()):
-            raise InvalidRecord("empty_required_html_field")
         if "price_basis" in row:
-            cleaned["price_basis"] = str(row["price_basis"]).strip()
+            price_basis = _present_value(row["price_basis"])
+            if price_basis:
+                cleaned["price_basis"] = price_basis
         validated_rows.append(cleaned)
 
     return validated_rows
@@ -200,16 +371,13 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
 
     try:
         raw_data = fetch(url, headers=source.get("headers"))
-        rows = parse_html_payload(raw_data)
+        # Dispatcher supplies the immutable schedule slot so retries of one job
+        # retain the same observation timestamp. Manual jobs fall back to UTC now.
+        rows = parse_html_payload(raw_data, observed_at=event.get("scheduled_at"))
     except RetryableFetchError:
         raise
     except (InvalidRecord, AccessDenied) as exc:
         store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
-        return
-    except Exception as exc:
-        store.update_job(
-            tenant_id, job_id, status="failed", error=f"fetch_failed_{exc}", row_count=0
-        )
         return
 
     values = [
