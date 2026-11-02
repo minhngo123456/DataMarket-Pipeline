@@ -190,7 +190,7 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
       "endpoint": "https://api.competitor-a.com/v1/prices",
       "url": "https://api.competitor-a.com/v1/prices",
       "headers": {
-        "Authorization": "Bearer secret-token-xyz"
+        "Authorization": "***"
       },
       "enabled": true,
       "updated_at": "2026-10-20T12:00:00Z"
@@ -210,6 +210,7 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
   "limit": 20
 }
 ```
+*Ghi chú:* giá trị trong `headers` chỉ trả nguyên văn cho Admin. Analyst và Viewer chỉ thấy tên header, giá trị là `***` như ví dụ trên. Đừng gửi lại `***` qua `PATCH /sources/:id`, vì giá trị đó sẽ được lưu đúng như vậy.
 
 ---
 
@@ -236,6 +237,8 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
 - `headers` là JSON object (tùy chọn) chứa header truyền kèm khi gửi HTTP request (User-Agent, API Key, Authorization,...).
 - Với `kind` là `csv`, không yêu cầu `endpoint`/`url`.
 - `endpoint`/`url` phải là URL `http(s)`; giá trị khác trả `400 invalid_source_payload` (áp dụng cả cho `PATCH /sources/:id`).
+- Worker chỉ kết nối tới địa chỉ công khai. URL trỏ tới loopback, mạng riêng, link-local, metadata, multicast hoặc dải dành riêng (kể cả qua redirect hay DNS) làm job `failed` với `source_destination_blocked`.
+- Khi redirect sang host khác, worker bỏ mọi header đã cấu hình trừ `User-Agent`.
 
 - **Response 201:**
 ```json

@@ -180,6 +180,36 @@ def test_web_csv_limits_match_backend():
     assert f"MAX_CSV_ROWS = {MAX_CSV_ROWS}" in source
 
 
+def test_source_header_values_are_only_returned_to_admin(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+    add_user(store, "viewer-a", "tenant-a", "viewer")
+    secret = {"Authorization": "Bearer secret123"}
+    masked = {"Authorization": "***"}
+    created = make_event(
+        "POST",
+        "/sources",
+        user_id="admin-a",
+        body={"source_id": "feed", "kind": "api", "endpoint": "https://a.vn/p", "headers": secret},
+    )
+    assert handler(created, store=store)["statusCode"] == 201
+
+    def listed_headers(user):
+        body = json.loads(handler(make_event("GET", "/sources", user_id=user), store=store)["body"])
+        return next(s for s in body["data"] if s["source_id"] == "feed")["headers"]
+
+    assert listed_headers("admin-a") == secret
+    assert listed_headers("analyst-a") == masked
+    assert listed_headers("viewer-a") == masked
+
+    # An analyst toggling a source must not read the stored value from the response.
+    toggled = handler(make_event("PATCH", "/sources/feed", user_id="analyst-a", body={"enabled": False}), store=store)
+    assert toggled["statusCode"] == 200
+    assert json.loads(toggled["body"])["headers"] == masked
+    assert "secret123" not in toggled["body"]
+    assert store.get("tenant-a", "SOURCE#feed")["headers"] == secret
+
+
 def test_source_url_must_be_http(store):
     add_user(store, "admin-a", "tenant-a", "admin")
     for bad in ("file:///proc/self/environ", "ftp://host/x", "not-a-url", "http://[bad"):
