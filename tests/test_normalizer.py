@@ -70,6 +70,86 @@ def test_unknown_sku_waits_for_explicit_confirmation(store, message):
     assert store.mapping("tenant-b", "vendor", "UNKNOWN") is None
 
 
+def second_job(store, message, job_id="csv-job-2"):
+    store.create_job(
+        "tenant-a",
+        job_id,
+        {"source_id": "vendor", "kind": "csv", "status": "queued", "row_count": 1, "raw_key": f"tenants/tenant-a/raw/{job_id}"},
+    )
+    return {**deepcopy(message), "job_id": job_id}
+
+
+def test_uploading_same_file_again_adds_no_observation(store, message):
+    first = ingest(message, store, NOW)
+    repeat = second_job(store, message)
+    result = ingest(repeat, store, NOW)
+
+    assert result["status"] == "accepted"
+    assert not result["duplicate"]
+    assert result["observation_id"] != first["observation_id"]
+    assert len(history(store, "tenant-a", "phone", NOW)) == 1
+    # The second job still finishes: its own row is counted even though the price point exists.
+    assert store.refresh_job("tenant-a", "csv-job-2") == {"accepted": 1, "pending": 0, "rejected": 0}
+    assert store.get("tenant-a", "JOB#csv-job-2")["status"] == "completed"
+    assert ingest(repeat, store, NOW)["duplicate"]
+    assert len(history(store, "tenant-a", "phone", NOW)) == 1
+
+
+def test_different_price_for_same_sku_and_time_is_kept(store, message):
+    ingest(message, store, NOW)
+    corrected = second_job(store, message)
+    corrected["record"]["price"] = "19900000"
+    ingest(corrected, store, NOW)
+
+    rows = history(store, "tenant-a", "phone", NOW)
+    assert sorted(row["price"] for row in rows) == [Decimal("19900000"), Decimal("20100000")]
+
+
+def test_different_time_or_basis_stays_a_separate_observation(store, message):
+    ingest(message, store, NOW)
+    later = second_job(store, message)
+    later["record"]["observed_at"] = "2026-10-19T07:50:00+07:00"
+    ingest(later, store, NOW)
+    other_basis = second_job(store, message, "csv-job-3")
+    other_basis["record"]["price_basis"] = "tax_excluded"
+    ingest(other_basis, store, NOW)
+
+    assert len(history(store, "tenant-a", "phone", NOW)) == 3
+
+
+def test_same_price_point_is_not_shared_between_tenants(store, message):
+    ingest(message, store, NOW)
+    ingest({**deepcopy(message), "tenant_id": "tenant-b"}, store, NOW)
+
+    assert len(history(store, "tenant-a", "phone", NOW)) == 1
+    assert len(history(store, "tenant-b", "phone", NOW)) == 1
+
+
+def test_approving_two_pending_copies_keeps_one_observation(store, message):
+    message["record"]["source_sku"] = "UNKNOWN"
+    first = ingest(message, store, NOW)
+    second = ingest(second_job(store, message), store, NOW)
+    assert first["status"] == second["status"] == "pending"
+
+    store.approve_pending("tenant-a", first["observation_id"], "phone", now=NOW)
+    store.approve_pending("tenant-a", second["observation_id"], "phone", now=NOW)
+
+    assert len(history(store, "tenant-a", "phone", NOW)) == 1
+
+
+def test_pending_receipt_saved_before_content_id_can_still_be_approved(store, message):
+    message["record"]["source_sku"] = "UNKNOWN"
+    result = ingest(message, store, NOW)
+    receipt = store.receipt("tenant-a", result["observation_id"])
+    receipt.pop("content_id")
+    store.control.put_item(Item=receipt)
+
+    store.approve_pending("tenant-a", result["observation_id"], "phone", now=NOW)
+
+    rows = history(store, "tenant-a", "phone", NOW)
+    assert [row["observation_id"] for row in rows] == [result["observation_id"]]
+
+
 def test_catalog_limit_is_atomic_and_duplicate_does_not_increment(store):
     tenant = store.tenant("tenant-a")
     store.put("tenant-a", "META", {**tenant, "max_skus": 2})

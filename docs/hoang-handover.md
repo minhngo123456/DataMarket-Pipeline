@@ -64,7 +64,7 @@ Mỗi dòng vào TransformQueue dùng JSON:
 ```
 
 - Job/source phải được tạo phía máy chủ, cùng tenant, đúng loại và chưa bị hủy. Worker API/HTML cập nhật `row_count` của job trước khi gửi dòng; số dòng giữ ổn định qua retry.
-- `row_number` bắt đầu từ 1, tối đa 1000. Cùng tenant/source/job/row_number tạo cùng observation_id. Không tái dùng job cho nội dung nguồn mới.
+- `row_number` bắt đầu từ 1, tối đa 1000. Cùng tenant/source/job/row_number tạo cùng receipt để đếm tiến độ job. Observation dùng khóa nội dung tenant/source/SKU/`observed_at`/`price_basis`/giá VND, nên job khác có cùng nội dung sẽ ghi đè thay vì thêm bản ghi. Không tái dùng job cho nội dung nguồn mới.
 - Giá dùng chuỗi số thập phân, không có dấu phân cách hàng nghìn. SKU được chuẩn hóa Unicode, bỏ khoảng trắng đầu/cuối và viết hoa, vẫn giữ số 0 đầu. Không ghép mờ tự động.
 - Không đưa `tenant_id` vào `record`. Worker lấy tenant từ metadata job, không từ CSV.
 - Bản này nhận JSON trực tiếp, tối đa 32 KiB/dòng; CSV UTF-8 tối đa 1 MiB và 1000 dòng. Chưa có nhánh đọc JSON qua tham chiếu S3. Muốn mở rộng phải bổ sung contract và kiểm thử trước.

@@ -40,7 +40,7 @@ Ví dụ trên là Observation sau chuẩn hóa, không phải envelope đầu v
 - Không so sánh khác biến thể, tiền tệ hoặc điều kiện bán như thể tương đương.
 - MVP ưu tiên VND. Nếu bật quy đổi, giữ giá gốc và ghi tỷ giá cùng ngày hiệu lực.
 - SKU ghép chưa chắc chắn không tham gia so sánh cho đến khi Analyst xác nhận.
-- Dùng observation ID ổn định để retry cùng job không tạo quan sát trùng.
+- Observation ID ổn định theo tenant, nguồn, SKU, `observed_at`, `price_basis` và giá VND. Retry cùng job hay tải lại cùng dữ liệu bằng job mới đều không tạo quan sát trùng. Cùng SKU và thời điểm nhưng giá khác là hai quan sát riêng; muốn sửa giá thì dùng `observed_at` mới.
 - Không diễn giải thiếu dữ liệu tồn kho là “hết hàng”.
 - Báo cáo cần công bố dữ liệu nguồn thiếu/cũ và khoảng thời gian tổng hợp.
 
