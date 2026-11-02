@@ -9,6 +9,8 @@ from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
 
+MASKED_HEADER_VALUE = "***"
+
 
 def is_http_url(value) -> bool:
     """Workers fetch this with urlopen, which also opens file:// and ftp://, so allow HTTP(S) only."""
@@ -17,6 +19,13 @@ def is_http_url(value) -> bool:
         return bool(parsed and parsed.scheme in ("http", "https") and parsed.hostname)
     except ValueError:
         return False
+
+
+def visible_headers(headers: dict, auth: AuthContext) -> dict:
+    """Header values can hold API keys, so only Admin reads them back."""
+    if auth.role == "admin":
+        return headers
+    return {name: MASKED_HEADER_VALUE for name in headers}
 
 
 def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> dict:
@@ -40,7 +49,7 @@ def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> di
         if url:
             item["url"] = url
         if "headers" in s and s["headers"] is not None:
-            item["headers"] = s["headers"]
+            item["headers"] = visible_headers(s["headers"], auth)
         data.append(item)
 
     return paginated(data=data, total=len(data), page=1, limit=20, extra={"sources": data})
@@ -126,7 +135,7 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
     if url:
         resp_data["url"] = str(url)
     if headers is not None:
-        resp_data["headers"] = headers
+        resp_data["headers"] = visible_headers(headers, auth)
 
     return ok(
         resp_data,
@@ -199,7 +208,7 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
     if "url" in updated:
         resp_data["url"] = updated["url"]
     if "headers" in updated and updated["headers"] is not None:
-        resp_data["headers"] = updated["headers"]
+        resp_data["headers"] = visible_headers(updated["headers"], auth)
 
     return ok(resp_data)
 
