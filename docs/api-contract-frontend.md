@@ -210,7 +210,7 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
   "limit": 20
 }
 ```
-*Ghi chú:* giá trị trong `headers` chỉ trả nguyên văn cho Admin. Analyst và Viewer chỉ thấy tên header, giá trị là `***` như ví dụ trên. Đừng gửi lại `***` qua `PATCH /sources/:id`, vì giá trị đó sẽ được lưu đúng như vậy.
+*Ghi chú:* giá trị trong `headers` chỉ trả nguyên văn cho Admin. Analyst và Viewer chỉ thấy tên header, giá trị là `***` như ví dụ trên. Nếu `POST /sources` hoặc `PATCH /sources/:id` gửi lại `***` cho một header, hệ thống giữ giá trị đã lưu của header đó; header chưa có giá trị thì bị bỏ qua.
 
 ---
 

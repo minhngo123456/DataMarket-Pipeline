@@ -28,6 +28,18 @@ def visible_headers(headers: dict, auth: AuthContext) -> dict:
     return {name: MASKED_HEADER_VALUE for name in headers}
 
 
+def restore_masked_headers(headers: dict, stored: dict | None) -> dict:
+    """A client echoing the mask keeps the stored value; a mask with nothing stored is dropped."""
+    stored = stored or {}
+    restored = {}
+    for name, value in headers.items():
+        if value != MASKED_HEADER_VALUE:
+            restored[name] = value
+        elif name in stored:
+            restored[name] = stored[name]
+    return restored
+
+
 def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> dict:
     """List all configured data sources for the current tenant."""
     store.tenant(auth.tenant_id)
@@ -92,6 +104,9 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         )
 
     source_id = identifier(source_id)
+    if headers is not None:
+        current = store.get(auth.tenant_id, "SOURCE#" + source_id) or {}
+        headers = restore_masked_headers(headers, current.get("headers"))
     tenant_meta = store.tenant(auth.tenant_id)
     max_sources = min(int(tenant_meta.get("max_sources", 3)), 3)
 
@@ -193,7 +208,7 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
         if body["headers"] is None:
             updated.pop("headers", None)
         else:
-            updated["headers"] = body["headers"]
+            updated["headers"] = restore_masked_headers(body["headers"], existing.get("headers"))
 
     store.put(auth.tenant_id, "SOURCE#" + source_id, updated)
 
