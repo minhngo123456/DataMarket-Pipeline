@@ -210,6 +210,40 @@ def test_source_header_values_are_only_returned_to_admin(store):
     assert store.get("tenant-a", "SOURCE#feed")["headers"] == secret
 
 
+def test_echoing_masked_header_keeps_stored_value(store):
+    add_user(store, "admin-a", "tenant-a", "admin")
+    add_user(store, "analyst-a", "tenant-a", "analyst")
+    created = make_event(
+        "POST",
+        "/sources",
+        user_id="admin-a",
+        body={
+            "source_id": "feed",
+            "kind": "api",
+            "endpoint": "https://a.vn/p",
+            "headers": {"Authorization": "Bearer secret123", "X-Old": "old"},
+        },
+    )
+    assert handler(created, store=store)["statusCode"] == 201
+
+    # Masked values are restored, new values are saved, omitted and unknown masked names disappear.
+    patch = {"headers": {"Authorization": "***", "X-New": "new", "X-Unknown": "***"}}
+    resp = handler(make_event("PATCH", "/sources/feed", user_id="analyst-a", body=patch), store=store)
+    assert resp["statusCode"] == 200
+    assert store.get("tenant-a", "SOURCE#feed")["headers"] == {"Authorization": "Bearer secret123", "X-New": "new"}
+    assert json.loads(resp["body"])["headers"] == {"Authorization": "***", "X-New": "***"}
+
+    # POST on an existing source_id replaces it, so it follows the same rule.
+    repost = make_event(
+        "POST",
+        "/sources",
+        user_id="analyst-a",
+        body={"source_id": "feed", "kind": "api", "endpoint": "https://a.vn/p", "headers": {"Authorization": "***"}},
+    )
+    assert handler(repost, store=store)["statusCode"] == 201
+    assert store.get("tenant-a", "SOURCE#feed")["headers"] == {"Authorization": "Bearer secret123"}
+
+
 def test_source_url_must_be_http(store):
     add_user(store, "admin-a", "tenant-a", "admin")
     for bad in ("file:///proc/self/environ", "ftp://host/x", "not-a-url", "http://[bad"):
