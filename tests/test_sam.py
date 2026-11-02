@@ -79,6 +79,18 @@ def test_every_function_using_the_store_has_both_tables():
             assert "OBSERVATIONS_TABLE" in variables, name
 
 
+def test_notification_errors_raise_an_alarm():
+    # The aggregator invokes this function asynchronously, so its failures reach no queue or job.
+    properties = translate()["Resources"]["NotificationFunctionErrorsAlarm"]["Properties"]
+    assert properties["Namespace"] == "AWS/Lambda"
+    assert properties["MetricName"] == "Errors"
+    assert properties["Dimensions"] == [{"Name": "FunctionName", "Value": {"Ref": "NotificationFunction"}}]
+    assert properties["Statistic"] == "Sum"
+    assert properties["Threshold"] == 1
+    assert properties["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
+    assert properties["TreatMissingData"] == "notBreaching"
+
+
 def test_aggregator_invokes_notification_lambda():
     resources = translate()["Resources"]
     env = resources["ReportAggregator"]["Properties"]["Environment"]["Variables"]
