@@ -4,6 +4,10 @@ import hashlib
 import re
 from datetime import UTC, datetime
 
+# Mirrored by apps/web/src/pages/Upload/csvPreview.js; tests/test_api.py keeps them equal.
+MAX_CSV_BYTES = 1024 * 1024
+MAX_CSV_ROWS = 1000
+
 
 class InvalidRecord(ValueError):
     pass

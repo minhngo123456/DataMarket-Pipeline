@@ -31,8 +31,8 @@ Self sign-up is hidden: the user pool only allows admins to create accounts.
 | Route | Roles | Content |
 | --- | --- | --- |
 | `/dashboard` | all | KPI cards, 24-hour price matrix by source (min/max highlight, stale label, ≥15% anomaly filter), 30-day price history chart, source status, alerts |
-| `/sources` | all (edit: admin, analyst; delete: admin) | Source list, add, enable/disable, delete; Pilot limit of 3 |
-| `/upload` | admin, analyst | CSV only, max 10 MB, preview with papaparse, `POST /jobs` then PUT to the presigned S3 URL, job status polling |
+| `/sources` | all (edit: admin, analyst; delete: admin) | Source list, add (URL and optional headers for API/web sources), enable/disable, delete; Pilot limit of 3 |
+| `/upload` | admin, analyst | CSV only, max 1 MiB and 1,000 rows (same limits as CSVWorker), preview with papaparse, `POST /jobs` then PUT to the presigned S3 URL, job status polling |
 | `/catalog` | admin, analyst | Pending / confirmed / rejected SKUs; approve into a catalog product or reject |
 | `/reports`, `/reports/:id` | all | Daily AI reports rendered from markdown; warning when the AI step failed |
 | `/members` | admin | Members, invite, change role, disable |

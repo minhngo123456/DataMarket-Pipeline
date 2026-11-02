@@ -13,12 +13,30 @@ const KINDS = [
   { value: 'web', label: 'Trang web tĩnh' },
 ];
 const MAX_SOURCES = 3;
+const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://shop.nha-cung-cap.vn/bang-gia' };
+
+function parseHeaders(text) {
+  const parsed = JSON.parse(text);
+  const valid = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.values(parsed).every((v) => typeof v === 'string');
+  if (!valid) throw new Error('invalid headers');
+  return parsed;
+}
+
+const validateHeaders = async (_, text) => {
+  if (!text?.trim()) return;
+  try {
+    parseHeaders(text);
+  } catch {
+    throw new Error('Nhập JSON dạng {"Tên-header": "giá trị"}.');
+  }
+};
 
 export function SourceListPage({ user }) {
   const sources = useApiData(() => marketDataApi.getSources(), mockSources);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
+  const kind = Form.useWatch('kind', form);
   const role = user?.role;
   const canEdit = role === 'admin' || role === 'analyst';
   const rows = sources.data?.data || [];
@@ -49,9 +67,15 @@ export function SourceListPage({ user }) {
   );
 
   const create = async () => {
-    const values = await form.validateFields();
+    let fields;
+    try {
+      fields = await form.validateFields();
+    } catch {
+      return; // antd already shows the field errors
+    }
+    const { headers, ...values } = fields;
     setSaving(true);
-    const payload = { ...values, enabled: true };
+    const payload = { ...values, enabled: true, ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
     const ok = await run(
       () => marketDataApi.createSource(payload),
       (list) => [...list, { ...payload, updated_at: new Date().toISOString() }],
@@ -66,7 +90,8 @@ export function SourceListPage({ user }) {
 
   const columns = [
     { title: 'NGUỒN', dataIndex: 'name', key: 'name', render: (name, row) => <div className="table-primary"><strong>{name}</strong><span>{row.source_id}</span></div> },
-    { title: 'LOẠI', dataIndex: 'kind', key: 'kind', render: (kind) => <Tag>{String(kind).toUpperCase()}</Tag> },
+    { title: 'LOẠI', dataIndex: 'kind', key: 'kind', render: (value) => <Tag>{String(value).toUpperCase()}</Tag> },
+    { title: 'ĐỊA CHỈ', key: 'endpoint', ellipsis: true, render: (_, row) => row.endpoint || row.url || '—' },
     { title: 'CẬP NHẬT', dataIndex: 'updated_at', key: 'updated_at', render: (v) => <span title={formatDateTime(v)}>{timeAgo(v)}</span> },
     {
       title: 'BẬT',
@@ -107,6 +132,12 @@ export function SourceListPage({ user }) {
           <Form.Item label="Tên hiển thị" name="name" rules={[{ required: true, message: 'Nhập tên nguồn.' }]}><Input placeholder="Website đối thủ B" /></Form.Item>
           <Form.Item label="Mã nguồn" name="source_id" extra="Chữ thường, số, gạch ngang. Không đổi được sau khi tạo." rules={[{ required: true, message: 'Nhập mã nguồn.' }, { pattern: /^[a-z0-9_-]{2,40}$/, message: 'Chỉ dùng a-z, 0-9, - và _ (2 đến 40 ký tự).' }]}><Input placeholder="competitor-b" /></Form.Item>
           <Form.Item label="Loại" name="kind" rules={[{ required: true }]}><Select options={KINDS} /></Form.Item>
+          {(kind === 'api' || kind === 'web') && (
+            <>
+              <Form.Item label="Địa chỉ URL" name="endpoint" rules={[{ required: true, message: 'Nhập địa chỉ URL.' }, { pattern: /^https?:\/\/[^\s/]+\S*$/i, message: 'URL phải bắt đầu bằng http:// hoặc https://.' }]}><Input placeholder={URL_PLACEHOLDER[kind]} /></Form.Item>
+              <Form.Item label="Header HTTP (JSON)" name="headers" extra={'Không bắt buộc. Ví dụ: {"User-Agent": "MarketData"}'} rules={[{ validator: validateHeaders }]}><Input.TextArea rows={3} /></Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
     </>

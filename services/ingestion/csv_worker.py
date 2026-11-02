@@ -8,14 +8,20 @@ import os
 
 import boto3
 
-from marketdata.contracts import AccessDenied, InvalidRecord, identifier
+from marketdata.contracts import (
+    MAX_CSV_BYTES,
+    MAX_CSV_ROWS,
+    AccessDenied,
+    InvalidRecord,
+    identifier,
+)
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 REQUIRED = {"source_sku", "price", "currency", "observed_at"}
-MAX_BYTES = 1024 * 1024
+MAX_BYTES = MAX_CSV_BYTES
 
 
 def parse_csv(data):
@@ -34,7 +40,7 @@ def parse_csv(data):
         for row in reader:
             if None in row or None in row.values():
                 raise InvalidRecord("invalid_csv_columns")
-            if len(rows) == 1000:
+            if len(rows) == MAX_CSV_ROWS:
                 raise InvalidRecord("csv_exceeds_1000_rows")
             rows.append(row)
         if not rows:

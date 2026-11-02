@@ -235,6 +235,7 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
 - Với `kind` là `api` hoặc `web`, hỗ trợ truyền `endpoint` hoặc `url` để crawler/worker tự động quét dữ liệu. Hệ thống lưu đồng thời cả `endpoint` và `url` để tương thích hoàn toàn với cả `api_worker` và `web_worker`.
 - `headers` là JSON object (tùy chọn) chứa header truyền kèm khi gửi HTTP request (User-Agent, API Key, Authorization,...).
 - Với `kind` là `csv`, không yêu cầu `endpoint`/`url`.
+- `endpoint`/`url` phải là URL `http(s)`; giá trị khác trả `400 invalid_source_payload` (áp dụng cả cho `PATCH /sources/:id`).
 
 - **Response 201:**
 ```json
@@ -314,9 +315,11 @@ Tạo job upload file CSV và nhận Presigned S3 PUT URL để trình duyệt t
 ```json
 {
   "source_id": "vendor",
-  "filename": "bang_gia_ngay_21.csv"
+  "filename": "bang_gia_ngay_21.csv",
+  "size_bytes": 20480
 }
 ```
+- `size_bytes` là tùy chọn. Nếu vượt quá 1 MiB (1.048.576 byte), API trả `413 csv_too_large` và không tạo job. CSVWorker vẫn tự kiểm tra giới hạn 1 MiB và 1.000 dòng.
 - **Response 201:**
 ```json
 {
