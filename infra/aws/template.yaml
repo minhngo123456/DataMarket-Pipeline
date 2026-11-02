@@ -940,6 +940,8 @@ Resources:
             Ref: AnthropicSecretName
           SNS_TOPIC_ARN:
             Ref: NotificationTopic
+          NOTIFICATION_FUNCTION_NAME:
+            Ref: NotificationFunction
       Events:
         ReportMessages:
           Type: SQS
@@ -1006,6 +1008,13 @@ Resources:
             - sns:Publish
             Resource:
               Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:*
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - NotificationFunction
+              - Arn
           - Effect: Allow
             Action:
             - logs:CreateLogGroup

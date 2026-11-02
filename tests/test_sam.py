@@ -63,3 +63,15 @@ def test_http_api_routes_reach_api_function_with_jwt():
     cors = resources["HttpApi"]["Properties"]["CorsConfiguration"]
     assert "DELETE" in cors["AllowMethods"]
     assert resources["ApiFunction"]["Properties"]["Handler"] == "services.api.app.handler"
+
+
+def test_aggregator_invokes_notification_lambda():
+    resources = translate()["Resources"]
+    env = resources["ReportAggregator"]["Properties"]["Environment"]["Variables"]
+    assert env["NOTIFICATION_FUNCTION_NAME"] == {"Ref": "NotificationFunction"}
+    role = resources["ReportAggregatorExecutionRole"]["Properties"]
+    statements = [s for p in role["Policies"] for s in p["PolicyDocument"]["Statement"]]
+    invokes = [s for s in statements if "lambda:InvokeFunction" in s["Action"]]
+    assert invokes == [
+        {"Effect": "Allow", "Action": ["lambda:InvokeFunction"], "Resource": {"Fn::GetAtt": ["NotificationFunction", "Arn"]}}
+    ]
