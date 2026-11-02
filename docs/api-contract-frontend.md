@@ -187,11 +187,25 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
       "source_id": "competitor-api",
       "name": "API Đối thủ A",
       "kind": "api",
+      "endpoint": "https://api.competitor-a.com/v1/prices",
+      "url": "https://api.competitor-a.com/v1/prices",
+      "headers": {
+        "Authorization": "Bearer secret-token-xyz"
+      },
       "enabled": true,
       "updated_at": "2026-10-20T12:00:00Z"
+    },
+    {
+      "source_id": "web-competitor-b",
+      "name": "Website Đối thủ B",
+      "kind": "web",
+      "url": "https://shop.competitor-b.vn/bang-gia",
+      "endpoint": "https://shop.competitor-b.vn/bang-gia",
+      "enabled": true,
+      "updated_at": "2026-10-20T12:30:00Z"
     }
   ],
-  "total": 2,
+  "total": 3,
   "page": 1,
   "limit": 20
 }
@@ -204,21 +218,35 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
 #### 5. `POST /sources`
 Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant đã đạt tối đa 3 nguồn).
 - **Role:** Admin, Analyst
-- **Request Body:**
+- **Request Body (Nguồn API hoặc Web):**
 ```json
 {
-  "source_id": "web-competitor-b",
-  "name": "Website Đối thủ B",
-  "kind": "web",
+  "source_id": "competitor-api",
+  "name": "API Đối thủ A",
+  "kind": "api",
+  "endpoint": "https://api.competitor-a.com/v1/prices",
+  "headers": {
+    "Authorization": "Bearer secret-token-xyz"
+  },
   "enabled": true
 }
 ```
+*Ghi chú:*
+- Với `kind` là `api` hoặc `web`, hỗ trợ truyền `endpoint` hoặc `url` để crawler/worker tự động quét dữ liệu. Hệ thống lưu đồng thời cả `endpoint` và `url` để tương thích hoàn toàn với cả `api_worker` và `web_worker`.
+- `headers` là JSON object (tùy chọn) chứa header truyền kèm khi gửi HTTP request (User-Agent, API Key, Authorization,...).
+- Với `kind` là `csv`, không yêu cầu `endpoint`/`url`.
+
 - **Response 201:**
 ```json
 {
-  "source_id": "web-competitor-b",
-  "name": "Website Đối thủ B",
-  "kind": "web",
+  "source_id": "competitor-api",
+  "name": "API Đối thủ A",
+  "kind": "api",
+  "endpoint": "https://api.competitor-a.com/v1/prices",
+  "url": "https://api.competitor-a.com/v1/prices",
+  "headers": {
+    "Authorization": "Bearer secret-token-xyz"
+  },
   "enabled": true,
   "status": "configured"
 }
@@ -236,20 +264,30 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
 ---
 
 #### 6. `PATCH /sources/:id`
-Bật/tắt hoặc sửa tên nguồn dữ liệu.
+Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn dữ liệu.
 - **Role:** Admin, Analyst
 - **Request Body:**
 ```json
 {
-  "name": "Website Đối thủ B (Cập nhật)",
-  "enabled": false
+  "name": "API Đối thủ A (v2)",
+  "endpoint": "https://api.competitor-a.com/v2/prices",
+  "headers": {
+    "Authorization": "Bearer new-token"
+  },
+  "enabled": true
 }
 ```
 - **Response 200:**
 ```json
 {
-  "source_id": "web-competitor-b",
-  "enabled": false,
+  "source_id": "competitor-api",
+  "name": "API Đối thủ A (v2)",
+  "endpoint": "https://api.competitor-a.com/v2/prices",
+  "url": "https://api.competitor-a.com/v2/prices",
+  "headers": {
+    "Authorization": "Bearer new-token"
+  },
+  "enabled": true,
   "status": "updated"
 }
 ```
