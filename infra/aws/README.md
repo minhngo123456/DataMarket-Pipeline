@@ -49,9 +49,31 @@ ReportAggregator đã đọc ReportQueue và gọi Notification trong cùng Lamb
 
 Bucket và table có DeletionPolicy Retain để tránh mất dữ liệu khi xóa stack. Khi dọn sandbox, cần kiểm tra rồi xóa riêng tài nguyên còn giữ. CloudWatch/PITR/S3 có thể phát sinh chi phí sau khi triển khai; bản local không tạo tài nguyên AWS.
 
-## Đưa web lên AWS
+## Đưa web lên Amplify Hosting
 
-Các bước này chưa được chạy trên AWS thật. Cần tài khoản đã được AWS xác minh cho CloudFront ([mục 8.1](../../docs/aws-deploy-free-plan.md)); nếu chưa, bật CloudFront sẽ làm bản cập nhật stack rollback. Không mở public WebBucket để né lỗi này.
+Đang dùng cho `marketdata-dev` vì tài khoản chưa được xác minh để tạo CloudFront. App `marketdata-dev-web` (`d1v1jrtzpab44p`, ap-southeast-1) được tạo bằng CLI và triển khai thủ công, không nối Git và không nằm trong `template.yaml`. Xóa stack không xóa app này.
+
+Cập nhật giao diện, từ thư mục gốc:
+
+```powershell
+python -m scripts.build_web_env --stack marketdata-dev --region ap-southeast-1 --profile marketdata-dev
+cd apps/web
+pnpm build
+cd ../..
+python -m scripts.deploy_web_amplify --app-id d1v1jrtzpab44p --region ap-southeast-1 --profile marketdata-dev
+```
+
+Tạo app mới cho stack khác: `aws amplify create-app --name <tên> --platform WEB --custom-rules file://rules.json`, rồi `aws amplify create-branch --app-id <appId> --branch-name main --stage PRODUCTION`. Trong `rules.json`, luật cho trang React có `status` là `200`, `target` là `/index.html`, và `source` là:
+
+```text
+</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>
+```
+
+Sau đó đặt `WebOrigin=https://main.<appId>.amplifyapp.com` (không có dấu `/` cuối) khi deploy stack để API và raw bucket nhận origin này.
+
+## Đưa web lên CloudFront
+
+Các bước này chưa chạy thành công trên AWS thật: lần thử ngày 02/11/2026 trên `marketdata-dev` đã rollback vì tài khoản chưa được xác minh. Cần tài khoản đã được AWS xác minh cho CloudFront ([mục 8.1](../../docs/aws-deploy-free-plan.md)); nếu chưa, bật CloudFront sẽ làm bản cập nhật stack rollback. Không mở public WebBucket để né lỗi này.
 
 1. Deploy với `EnableCloudFront=ENABLED`, các tham số khác giữ nguyên. Lấy output `WebUrl`, `WebDistributionId`, `WebBucket`.
 2. Deploy lần nữa với `WebOrigin=<WebUrl>` (không có dấu `/` cuối). `LocalDevOrigin` vẫn giữ `http://localhost:5173`, nên web chạy local không bị cắt.
