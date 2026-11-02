@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from marketdata.contracts import InvalidRecord, envelope, stable_id
+from marketdata.contracts import InvalidRecord, envelope, observation_content_id, stable_id
 from marketdata.normalize import normalize
 
 
@@ -37,7 +37,7 @@ def ingest(value, store, now):
     receipt.update(normalized)
     # The receipt tracks this job's row; content_id identifies the price point across jobs,
     # so uploading the same data again overwrites one observation instead of adding another.
-    receipt["content_id"] = stable_id(
+    receipt["content_id"] = observation_content_id(
         value["tenant_id"],
         value["source_id"],
         normalized["source_sku"],
