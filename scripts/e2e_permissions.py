@@ -173,8 +173,9 @@ def run_checks(viewer, other_admin, home_ids):
         problems = []
         for value in home_ids["products"]:
             status, payload = other_admin("GET", f"/products/{value}/price-history")
-            if status != 200 or payload.get("total") != 0:
-                problems.append(f"{value}: status {status}, total {payload.get('total')}")
+            problem = denied_problem(status, payload, "product_unavailable")
+            if problem:
+                problems.append(f"{value}: {problem}")
         record("tenant-b admin reads no group07 price history", "; ".join(problems))
     else:
         skip("tenant-b admin reads no group07 price history", f"{HOME_TENANT} has no products")
@@ -368,7 +369,7 @@ def main(argv=None):
             print(f"  viewer {method} {path} -> 403 {reason}")
         for path in (*OTHER_ADMIN_EMPTY_LISTS, "/members"):
             print(f"  tenant-b admin GET {path} -> no {HOME_TENANT} data")
-        print(f"  tenant-b admin GET each {HOME_TENANT} report and job -> 404, price history -> empty")
+        print(f"  tenant-b admin GET each {HOME_TENANT} report and job -> 404, price history -> 403 product_unavailable")
         return 0
 
     passwords = provision(store, cognito, pool_id)
