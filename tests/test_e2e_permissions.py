@@ -44,7 +44,7 @@ def good_other_admin(method, path, body=None):
     if path.startswith(("/reports/", "/jobs/")):
         return 404, {"error": {"code": "not_found", "message": "gone"}}
     if path.endswith("/price-history"):
-        return 200, {"total": 0, "data": []}
+        return 403, {"error": {"code": "access_denied", "message": "product_unavailable"}}
     return 200, {"tenant_id": OTHER_TENANT, "data": []}
 
 
