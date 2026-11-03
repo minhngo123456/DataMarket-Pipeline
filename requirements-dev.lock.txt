@@ -11,6 +11,7 @@ charset-normalizer==3.5.2
 colorama==0.4.6
 cryptography==50.0.2
 docker==7.2.0
+envs==1.4
 idna==3.20
 iniconfig==2.3.1
 jmespath==1.1.0
@@ -26,10 +27,12 @@ networkx==3.7
 packaging==26.3
 pluggy==1.7.0
 py-partiql-parser==0.6.3
+pycognito==2024.5.1
 pycparser==3.11
 pydantic==2.13.5
 pydantic_core==2.46.5
 Pygments==2.21.0
+PyJWT==2.15.1
 pytest==8.4.2
 python-dateutil==2.9.0.post0
 pywin32==312; sys_platform == "win32"
