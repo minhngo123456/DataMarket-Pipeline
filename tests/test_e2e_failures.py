@@ -157,6 +157,15 @@ def test_tenant_messages_leaves_other_tenants_in_the_queue(world):
     assert sum(int(value) for value in remaining.values()) == 2
 
 
+def test_reading_leaves_messages_visible_for_a_cleanup_right_after(world):
+    *_, sqs, _, dlq = world
+    sqs.send_message(QueueUrl=dlq, MessageBody=json.dumps({"tenant_id": TENANT, "job_id": "mine"}))
+
+    assert len(tenant_messages(sqs, dlq)) == 1
+    assert len(tenant_messages(sqs, dlq, delete=True)) == 1
+    assert tenant_messages(sqs, dlq) == []
+
+
 def test_dead_letter_url_follows_the_redrive_policy(world):
     *_, sqs, queue, dlq = world
     assert dead_letter_url(sqs, queue) == dlq

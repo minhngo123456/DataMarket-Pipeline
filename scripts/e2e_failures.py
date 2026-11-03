@@ -116,8 +116,9 @@ def belongs_to_tenant(body):
 
 
 def tenant_messages(sqs, queue_url, delete=False):
-    """Return this tenant's message bodies; other tenants' messages reappear after 30 seconds."""
+    """Return this tenant's message bodies; every message kept is made visible again at the end."""
     found = {}
+    kept = []
     empty_reads = 0
     while empty_reads < 2:
         messages = sqs.receive_message(
@@ -129,6 +130,11 @@ def tenant_messages(sqs, queue_url, delete=False):
                 found[message["MessageId"]] = json.loads(message["Body"])
                 if delete:
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message["ReceiptHandle"])
+                    continue
+            kept.append(message["ReceiptHandle"])
+    # Still hidden, a message would be missed by a cleanup that runs right after this read.
+    for handle in kept:
+        sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=handle, VisibilityTimeout=0)
     return list(found.values())
 
 
