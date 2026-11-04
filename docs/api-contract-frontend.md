@@ -573,8 +573,15 @@ Danh sách các thành viên trong tenant hiện tại.
 
 ---
 
+#### `POST /tenants`
+Người dùng đã xác nhận email nhưng chưa thuộc tenant nào tự tạo workspace và trở thành Admin. Server tự sinh `tenant_id`; mỗi tài khoản chỉ tạo được một lần.
+- **Role:** Đã đăng nhập, chưa có membership (`GET /me` trả 403 `membership_unavailable`)
+- **Request Body:** `{ "name": "Shop ABC" }` (2-80 ký tự)
+- **Response 201:** `{ "tenant_id": "t-...", "name": "Shop ABC", "role": "admin", "status": "active" }`
+- **Lỗi:** 400 `invalid_tenant_name`, 403 `verified_email_required`, 409 `user_already_has_membership`
+
 #### 17. `POST /members/invite`
-Thêm / phân quyền cho một thành viên mới vào tenant (Chặn nếu tenant $\ge$ 5 thành viên).
+Cấp quyền cho một người đã tự tạo tài khoản, theo email (Chặn nếu tenant $\ge$ 5 thành viên). Không tạo tài khoản và không gửi email. Trả 404 `user_not_registered` nếu email chưa có tài khoản đã xác nhận, 409 nếu người đó đã thuộc tenant khác.
 - **Role:** Admin
 - **Request Body:**
 ```json

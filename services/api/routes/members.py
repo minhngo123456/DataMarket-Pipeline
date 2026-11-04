@@ -41,8 +41,12 @@ def handle_get_members(event: dict, store: DynamoStore, auth: AuthContext) -> di
     })
 
 
+class UserNotRegistered(Exception):
+    """The email has no confirmed account; it must sign up before it can be added."""
+
+
 def cognito_user_id(email: str, cognito=None) -> str | None:
-    """Create (or look up) the Cognito user for email and return its sub.
+    """Look up the signed-up Cognito user for email and return its sub, sending no email.
 
     Cognito sub is what the JWT authorizer passes as identity, so membership must be
     keyed by it. Returns None when no user pool is configured (local tests).
@@ -52,17 +56,13 @@ def cognito_user_id(email: str, cognito=None) -> str | None:
         return None
     client = cognito or boto3.client("cognito-idp")
     try:
-        user = client.admin_create_user(
-            UserPoolId=pool_id,
-            Username=email,
-            UserAttributes=[
-                {"Name": "email", "Value": email},
-            ],
-            DesiredDeliveryMediums=["EMAIL"],
-        )["User"]
-        attributes = user.get("Attributes", [])
-    except client.exceptions.UsernameExistsException:
-        attributes = client.admin_get_user(UserPoolId=pool_id, Username=email).get("UserAttributes", [])
+        user = client.admin_get_user(UserPoolId=pool_id, Username=email)
+    except client.exceptions.UserNotFoundException as exc:
+        raise UserNotRegistered from exc
+    # Anyone can start a sign-up with any address; only a confirmed account proves ownership.
+    if user.get("UserStatus") == "UNCONFIRMED":
+        raise UserNotRegistered
+    attributes = user.get("UserAttributes", [])
     user_id = next((a["Value"] for a in attributes if a["Name"] == "sub"), None)
     if not user_id:
         raise Conflict("cognito_user_missing_sub")
@@ -101,13 +101,18 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cog
 
     # Membership must be keyed by the Cognito sub, the identity the JWT authorizer passes.
     # Without a user pool (local tests) fall back to a stable id derived from the email.
-    user_id = cognito_user_id(email, cognito) or (
-        already_member["sk"].removeprefix("MEMBER#") if already_member else stable_id("member", email)
-    )
+    try:
+        user_id = cognito_user_id(email, cognito) or (
+            already_member["sk"].removeprefix("MEMBER#") if already_member else stable_id("member", email)
+        )
+    except UserNotRegistered:
+        return error(
+            "user_not_registered",
+            "Email này chưa có tài khoản đã xác nhận. Nhờ người đó tạo tài khoản ở trang đăng nhập rồi thêm lại.",
+            404,
+        )
     user_id = identifier(user_id)
 
-    # If Cognito succeeds but this transaction fails, the user has no application
-    # membership. Retrying the invitation looks up that Cognito user again.
     store.save_member(auth.tenant_id, user_id, role, email)
 
     return ok(

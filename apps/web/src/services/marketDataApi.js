@@ -7,6 +7,7 @@ const resourcePath = (resource, id) => `/${resource}/${encodeURIComponent(id)}`;
 // feature/hieu-auth-api-ai-report.
 export const marketDataApi = {
   getCurrentUser: (config) => api.get('/me', config).then(data),
+  createTenant: (payload) => api.post('/tenants', payload).then(data),
   getDashboardStats: () => api.get('/dashboard/stats').then(data),
   getAlerts: (params) => api.get('/alerts', { params }).then(data),
   getSources: (params) => api.get('/sources', { params }).then(data),

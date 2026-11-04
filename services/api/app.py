@@ -35,6 +35,7 @@ from services.api.routes.sources import (
     handle_patch_source,
     handle_post_sources,
 )
+from services.api.routes.tenants import handle_create_tenant
 from services.api.routes.upload import handle_csv_upload_url, handle_get_job_status
 
 logger = logging.getLogger()
@@ -53,6 +54,10 @@ def route_request(event: dict, store: DynamoStore) -> dict:
     if method == "OPTIONS":
         from services.api.response import build_response
         return build_response(204)
+
+    # The caller has no membership yet, so this is the one route that runs before the check below.
+    if method == "POST" and path == "/tenants":
+        return handle_create_tenant(event, store)
 
     # All API endpoints require authenticated user with at least viewer role
     auth = authenticate_and_authorize(event, store, allowed_roles=("admin", "analyst", "viewer"))

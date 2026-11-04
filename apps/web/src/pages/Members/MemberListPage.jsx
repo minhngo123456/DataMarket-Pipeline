@@ -41,7 +41,7 @@ export function MemberListPage({ user }) {
       form.resetFields();
       if (!members.isMock) members.reload();
     } catch (error) {
-      message.error(apiErrorMessage(error, 'Không mời được thành viên.'));
+      message.error(apiErrorMessage(error, 'Không thêm được thành viên.'));
     } finally {
       setSaving(false);
     }
@@ -73,7 +73,7 @@ export function MemberListPage({ user }) {
         eyebrow="QUẢN TRỊ WORKSPACE"
         title="Thành viên"
         description={`${rows.length}/${maxMembers} thành viên. Bạn không tự đổi vai trò hay khóa chính mình được.`}
-        actions={<Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= maxMembers} onClick={() => setOpen(true)}>Mời thành viên</Button>}
+        actions={<Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= maxMembers} onClick={() => setOpen(true)}>Thêm thành viên</Button>}
       />
       {members.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, trang đang hiển thị dữ liệu mẫu. Thay đổi chỉ có trên màn hình." />}
       <Card className="panel-card table-panel" variant="borderless">
@@ -81,8 +81,8 @@ export function MemberListPage({ user }) {
           <Table columns={columns} dataSource={rows} rowKey="user_id" loading={members.loading} pagination={false} scroll={{ x: 640 }} />
         )}
       </Card>
-      <Modal title="Mời thành viên" open={open} okText="Thêm" cancelText="Hủy" confirmLoading={saving} onOk={invite} onCancel={() => setOpen(false)} destroyOnHidden>
-        <p className="modal-description">Tài khoản Cognito của người này do admin tạo; ở đây chỉ cấp quyền vào workspace.</p>
+      <Modal title="Thêm thành viên" open={open} okText="Thêm" cancelText="Hủy" confirmLoading={saving} onOk={invite} onCancel={() => setOpen(false)} destroyOnHidden>
+        <p className="modal-description">Người này tự tạo tài khoản ở trang đăng nhập trước, rồi bạn nhập đúng email đó để cấp quyền. Hệ thống không gửi email mời.</p>
         <Form form={form} layout="vertical" initialValues={{ role: 'analyst' }}>
           <Form.Item label="Email" name="email" rules={[{ required: true, type: 'email', message: 'Nhập email hợp lệ.' }]}><Input placeholder="ten@congty.com" /></Form.Item>
           <Form.Item label="Vai trò" name="role" rules={[{ required: true }]}><Select options={ROLES} /></Form.Item>

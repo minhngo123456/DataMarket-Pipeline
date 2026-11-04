@@ -12,7 +12,7 @@ Bản hợp nhất ngày 04/11/2026 thêm NotificationFunction riêng, retry t�
 - CSVQueue, APIQueue, WebQueue, TransformQueue và ReportQueue có DLQ riêng; Scheduler có DispatchDLQ. Sáu alarm DLQ và một alarm lỗi NotificationFunction gửi ALARM/OK tới AlarmTopic. `AlarmEmail` tạo subscription email vận hành, cần xác nhận trước khi thử cảnh báo.
 - CSV/API/Web worker và Normalizer: timeout 45 giây, visibility 300 giây. ReportAggregator: timeout 120 giây, ReportQueue visibility 720 giây. Event source mapping dùng partial batch response và concurrency tối đa 2 trên mỗi mapping, dùng chung giữa các tenant.
 - Job Dispatcher mỗi 6 giờ; Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. `ScheduleState=DISABLED` mặc định; chỉ bật lịch sau khi kiểm thử nguồn, hạn mức báo cáo và retry.
-- Cognito cấp token; 21 route HTTP API dùng JWT authorizer. ApiFunction kiểm tra membership/RBAC và hạn mức. IAM giới hạn tài nguyên, không thay thế kiểm tra tenant ở handler.
+- Cognito cấp token và cho người dùng tự đăng ký, xác nhận email bằng mã; 22 route HTTP API dùng JWT authorizer. `POST /tenants` tạo workspace mới, không cấp quyền vào tenant có sẵn. ApiFunction kiểm tra membership/RBAC và hạn mức. IAM giới hạn tài nguyên, không thay thế kiểm tra tenant ở handler.
 - ReportAggregator tiêu thụ ReportQueue, lưu báo cáo rồi gọi bất đồng bộ NotificationFunction. Hàm thông báo theo dõi kết quả riêng từng kênh và thử lại kênh chưa gửi thành công.
 
 ## CloudFront và địa chỉ giao diện

@@ -418,6 +418,7 @@ def test_invite_member_uses_cognito_sub_and_allows_dotted_email(store, monkeypat
     cognito = boto3.client("cognito-idp")
     pool_id = cognito.create_user_pool(PoolName="test", UsernameAttributes=["email"])["UserPool"]["Id"]
     monkeypatch.setenv("USER_POOL_ID", pool_id)
+    cognito.admin_create_user(UserPoolId=pool_id, Username="nguyen.minh@example.com", MessageAction="SUPPRESS")
 
     resp = handler(
         make_event("POST", "/members/invite", user_id="admin-a", body={"email": "Nguyen.Minh@Example.com", "role": "analyst"}),
@@ -437,7 +438,7 @@ def test_invite_member_uses_cognito_sub_and_allows_dotted_email(store, monkeypat
     me = handler(make_event("GET", "/me", user_id=sub), store=store)
     assert me["statusCode"] == 200
 
-    # Re-inviting the same email reuses the existing Cognito user instead of failing.
+    # Adding the same email again updates the same user instead of failing.
     again = handler(
         make_event("POST", "/members/invite", user_id="admin-a", body={"email": "nguyen.minh@example.com", "role": "viewer"}),
         store=store,
