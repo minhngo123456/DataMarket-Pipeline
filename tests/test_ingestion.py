@@ -9,6 +9,7 @@ from marketdata.contracts import AccessDenied, InvalidRecord
 from marketdata.queries import history
 from marketdata.queue import send_rows
 from services.ingestion.csv_worker import parse_csv, process_event
+from services.ingestion.csv_worker import process_batch as csv_worker_batch
 from services.ingestion.dispatcher import dispatch
 from services.normalizer.app import process_batch
 from tests.conftest import NOW
@@ -56,6 +57,95 @@ def test_100_rows_end_to_end_with_retry(store):
     assert store.get("tenant-a", "JOB#csv-job")["status"] == "completed"
     assert len(history(store, "tenant-a", "phone", NOW)) == 90
     assert not history(store, "tenant-b", "phone", NOW)
+
+
+def test_csv_duplicate_resuming_after_s3_read_cannot_reopen_completed_job(store):
+    content = Path("tests/fixtures/prices.csv").read_bytes()
+    s3, sqs, queue, event = upload(store, content)
+    completed = {}
+
+    class ConcurrentCsvS3:
+        def get_object(self, **kwargs):
+            response = s3.get_object(**kwargs)
+            # A competing delivery finishes while this delivery still holds its
+            # initial queued job read and has not yet returned from GetObject.
+            process_event(event, store, s3, sqs, "test-raw-bucket", queue)
+            processed = 0
+            while messages := sqs.receive_message(
+                QueueUrl=queue, MaxNumberOfMessages=10
+            ).get("Messages", []):
+                batch = {"Records": [
+                    {"messageId": message["MessageId"], "body": message["Body"]}
+                    for message in messages
+                ]}
+                assert process_batch(batch, store, NOW) == {"batchItemFailures": []}
+                for message in messages:
+                    sqs.delete_message(QueueUrl=queue, ReceiptHandle=message["ReceiptHandle"])
+                processed += len(messages)
+            assert processed == 100
+            completed["job"] = store.get("tenant-a", "JOB#csv-job")
+            completed["source"] = store.get("tenant-a", "SOURCE#vendor")
+            assert completed["job"]["status"] == "completed"
+            return response
+
+    process_event(event, store, ConcurrentCsvS3(), sqs, "test-raw-bucket", queue)
+
+    assert store.get("tenant-a", "JOB#csv-job") == completed["job"]
+    assert store.get("tenant-a", "SOURCE#vendor") == completed["source"]
+    assert not sqs.receive_message(QueueUrl=queue).get("Messages")
+    assert len(store.receipts("tenant-a", job_id="csv-job")) == 100
+    assert len(history(store, "tenant-a", "phone", NOW)) == 90
+    assert not history(store, "tenant-b", "phone", NOW)
+
+
+def test_csv_retry_repairs_failed_health_write_without_rereading_or_changing_job(store, monkeypatch):
+    s3, sqs, queue, event = upload(store, b"wrong,headers\n1,2\n")
+    record_health = store.record_source_collection
+    failures = []
+
+    def fail_first_failed_health(tenant, source, job_id, kind, status, *args, **kwargs):
+        if status == "failed" and not failures:
+            failures.append(job_id)
+            raise RuntimeError("simulated_failed_health_write_error")
+        return record_health(tenant, source, job_id, kind, status, *args, **kwargs)
+
+    monkeypatch.setattr(store, "record_source_collection", fail_first_failed_health)
+    message = {
+        "messageId": "csv-health-recovery", "body": json.dumps(event),
+        "attributes": {"ApproximateReceiveCount": "1"},
+    }
+    result = csv_worker_batch(
+        {"Records": [message]}, store, s3, sqs, "test-raw-bucket", queue
+    )
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "csv-health-recovery"}]}
+    failed_job = store.get("tenant-a", "JOB#csv-job")
+    assert failed_job["status"] == "failed"
+    assert failed_job["error"] == "invalid_csv_headers"
+    assert failed_job["raw_version"] == event["detail"]["object"]["version-id"]
+    assert failures == ["csv-job"]
+    assert store.get("tenant-a", "SOURCE#vendor")["collection_status"] == "running"
+
+    class UnexpectedS3:
+        def get_object(self, **kwargs):
+            raise AssertionError("a failed job must reconcile health without rereading S3")
+
+    def unexpected_parse(*args, **kwargs):
+        raise AssertionError("a failed job must not parse CSV again")
+
+    monkeypatch.setattr("services.ingestion.csv_worker.parse_csv", unexpected_parse)
+    message["attributes"]["ApproximateReceiveCount"] = "2"
+    retried = csv_worker_batch(
+        {"Records": [message]}, store, UnexpectedS3(), sqs, "test-raw-bucket", queue
+    )
+
+    assert retried == {"batchItemFailures": []}
+    assert store.get("tenant-a", "JOB#csv-job") == failed_job
+    health = store.get("tenant-a", "SOURCE#vendor")
+    assert health["collection_status"] == "failed"
+    assert health["last_job_id"] == "csv-job"
+    assert health["last_error_code"] == "invalid_csv_headers"
+    assert not sqs.receive_message(QueueUrl=queue).get("Messages")
 
 
 def test_upload_cannot_switch_job_tenant_or_object_version(store):

@@ -21,7 +21,7 @@ jsonpointer==3.3
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 MarkupSafe==3.0.4
-moto==5.2.4
+moto[cognitoidp]==5.2.4
 mpmath==1.3.0
 networkx==3.7
 packaging==26.3

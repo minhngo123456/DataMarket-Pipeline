@@ -61,9 +61,13 @@ def test_claude_client_sends_current_model_and_falls_back_on_empty_text(monkeypa
     assert result["status"] == "fallback_quantitative"
 
 
-def test_claude_client_graceful_fallback():
+def test_claude_client_graceful_fallback(monkeypatch):
+    def timeout_response(*args, **kwargs):
+        raise TimeoutError("simulated_claude_timeout")
+
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", timeout_response)
     client = ClaudeClient(api_key="bad-key", mock_mode=False)
-    # Simulate failed API call
+    # Exercise the failure path without calling an external, potentially paid API.
     summary_data = {
         "tenant_id": "tenant-a",
         "period": "2026-10-19",
