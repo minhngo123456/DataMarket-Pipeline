@@ -12,8 +12,10 @@ from marketdata.contracts import AccessDenied, InvalidRecord, identifier
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
+from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
 from services.ingestion.safe_http import open_public
+from services.ingestion.snapshot import SourceSnapshots
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -90,7 +92,7 @@ def parse_api_payload(data):
     return rows
 
 
-def process_event(event, store, sqs, transform_queue, fetcher=None):
+def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=None):
     fetch = fetcher or default_fetcher
 
     if event.get("schema_version") != 1:
@@ -107,53 +109,49 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
         raise AccessDenied("job_not_found")
     if job.get("source_id") != source_id or job.get("kind") != "api":
         raise AccessDenied("api_job_required")
+    store.tenant(tenant_id)
+    if job.get("status") == "completed":
+        store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
+        return
 
     source = store.get(tenant_id, "SOURCE#" + source_id)
     if not source or source.get("kind") != "api" or not source.get("enabled"):
         store.tenant(tenant_id)
-        store.update_job(
-            tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0
+        store.fail_source_job(tenant_id, job_id, source_id, "api", "source_disabled_or_missing")
+        return
+    if job.get("status") == "failed":
+        store.record_source_collection(
+            tenant_id, source_id, job_id, "api", "failed",
+            collection_error_code(job.get("error"), "api"),
         )
         return
     store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
+    store.record_source_collection(tenant_id, source_id, job_id, "api", "running")
 
-    endpoint = source.get("endpoint") or source.get("url")
-    if not endpoint:
-        store.update_job(
-            tenant_id, job_id, status="failed", error="missing_api_endpoint", row_count=0
-        )
-        return
+    def load_rows():
+        endpoint = source.get("endpoint") or source.get("url")
+        if not endpoint:
+            raise InvalidRecord("missing_api_endpoint")
+        return parse_api_payload(fetch(endpoint, headers=source.get("headers")))
 
     try:
-        raw_data = fetch(endpoint, headers=source.get("headers"))
-        rows = parse_api_payload(raw_data)
+        snapshot = (snapshots or SourceSnapshots()).get_or_create(event, job, load_rows)
     except RetryableFetchError:
         raise
     except (InvalidRecord, AccessDenied) as exc:
-        store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
+        code = collection_error_code(exc, "api")
+        if store.fail_source_job(tenant_id, job_id, source_id, "api", code, require_unbound=True):
+            store.record_source_collection(tenant_id, source_id, job_id, "api", "failed", code)
         return
 
-    values = [
-        {
-            "schema_version": 1,
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "job_id": job_id,
-            "row_number": i,
-            "record": row,
-        }
-        for i, row in enumerate(rows, 1)
-    ]
-
-    # Validate size limits (32 KiB per row)
-    if any(len(json.dumps(v, ensure_ascii=False).encode()) > 32 * 1024 for v in values):
-        store.update_job(
-            tenant_id, job_id, status="failed", error="row_exceeds_32_kib", row_count=0
-        )
+    committed_job = store.bind_source_snapshot(
+        tenant_id, job_id, source_id, "api", snapshot.descriptor, len(snapshot.values)
+    )
+    if committed_job["status"] == "completed":
+        store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
         return
-
-    store.update_job(tenant_id, job_id, row_count=len(rows), status="normalizing")
-    send_rows(sqs, transform_queue, values)
+    send_rows(sqs, transform_queue, snapshot.values)
+    store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
 
 
 def process_batch(event, store, sqs, queue, fetcher=None, input_queue_url=None):
