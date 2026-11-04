@@ -58,9 +58,16 @@ def demo():
         AWS_SECRET_ACCESS_KEY="testing",
         AWS_DEFAULT_REGION="us-east-1",
         AWS_EC2_METADATA_DISABLED="true",
+        SOURCE_SNAPSHOT_BUCKET="source-snapshots-demo",
     )
     with mock_aws():
         create_tables()
+        s3 = boto3.client("s3")
+        snapshot_bucket = os.environ["SOURCE_SNAPSHOT_BUCKET"]
+        s3.create_bucket(Bucket=snapshot_bucket)
+        s3.put_bucket_versioning(
+            Bucket=snapshot_bucket, VersioningConfiguration={"Status": "Enabled"}
+        )
         store = DynamoStore("control", "observations")
         store.put(
             "tenant-a",

@@ -1,6 +1,7 @@
 """DynamoDB access. Every public read/write requires a tenant identifier."""
 
 import os
+import re
 from datetime import UTC, datetime, timedelta
 
 import boto3
@@ -435,6 +436,108 @@ class DynamoStore:
         except self.control.meta.client.exceptions.ConditionalCheckFailedException as exc:
             raise AccessDenied("upload_version_changed") from exc
 
+    def begin_csv_normalization(self, tenant_id, job_id, source_id, version, row_count):
+        """Keep one bound CSV's row count stable without reopening a completed job."""
+        source_id = identifier(source_id)
+        if type(row_count) is not int or not 1 <= row_count <= 1000:
+            raise InvalidRecord("invalid_csv_row_count")
+        try:
+            return self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "JOB#" + identifier(job_id)},
+                UpdateExpression="SET row_count = :count, #status = :normalizing",
+                ConditionExpression=(
+                    "attribute_exists(pk) AND source_id = :source AND kind = :kind "
+                    "AND raw_version = :version AND "
+                    "(#status IN (:queued, :extracting) OR "
+                    "(#status = :normalizing AND row_count = :count))"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":source": source_id, ":kind": "csv", ":version": version,
+                    ":count": row_count, ":queued": "queued", ":extracting": "extracting",
+                    ":normalizing": "normalizing",
+                },
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            job = self.get(tenant_id, "JOB#" + identifier(job_id))
+            if (
+                not job or job.get("source_id") != source_id or job.get("kind") != "csv"
+                or job.get("raw_version") != version or job.get("row_count") != row_count
+                or job.get("status") != "completed"
+            ):
+                raise AccessDenied("csv_normalization_binding_conflict") from None
+            return job
+
+    def bind_source_snapshot(self, tenant_id, job_id, source_id, kind, snapshot, row_count):
+        """Bind immutable rows and their count atomically before any SQS send."""
+        try:
+            return self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "JOB#" + identifier(job_id)},
+                UpdateExpression="SET source_snapshot = :snapshot, row_count = :count, #status = :normalizing",
+                ConditionExpression=(
+                    "attribute_exists(pk) AND source_id = :source AND kind = :kind "
+                    "AND attribute_not_exists(source_snapshot) "
+                    "AND (attribute_not_exists(row_count) OR row_count = :zero) "
+                    "AND #status IN (:queued, :extracting, :normalizing)"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":snapshot": snapshot,
+                    ":count": row_count,
+                    ":zero": 0,
+                    ":source": identifier(source_id),
+                    ":kind": kind,
+                    ":queued": "queued",
+                    ":extracting": "extracting",
+                    ":normalizing": "normalizing",
+                },
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            job = self.get(tenant_id, "JOB#" + identifier(job_id))
+            if (
+                not job
+                or job.get("source_id") != source_id
+                or job.get("kind") != kind
+                or job.get("status") not in ("queued", "extracting", "normalizing", "completed")
+                or job.get("source_snapshot") != snapshot
+                or job.get("row_count") != row_count
+            ):
+                raise AccessDenied("source_snapshot_binding_conflict") from None
+            # A retry or concurrent delivery must not reset status/counts, in
+            # particular if the Normalizer has already completed this job.
+            return job
+
+    def fail_source_job(self, tenant_id, job_id, source_id, kind, error, require_unbound=False):
+        """Fail only an active matching source job; late duplicates cannot undo completion."""
+        condition = (
+            "attribute_exists(pk) AND source_id = :source AND kind = :kind "
+            "AND attribute_not_exists(collection_succeeded_at) "
+            "AND #status IN (:queued, :extracting, :normalizing)"
+        )
+        if require_unbound:
+            condition += " AND attribute_not_exists(source_snapshot)"
+        try:
+            self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "JOB#" + identifier(job_id)},
+                UpdateExpression="SET #status = :failed, #error = :error",
+                ConditionExpression=condition,
+                ExpressionAttributeNames={"#status": "status", "#error": "error"},
+                ExpressionAttributeValues={
+                    ":source": identifier(source_id),
+                    ":kind": kind,
+                    ":failed": "failed",
+                    ":error": error,
+                    ":queued": "queued",
+                    ":extracting": "extracting",
+                    ":normalizing": "normalizing",
+                },
+            )
+            return True
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            return False
+
     def refresh_job(self, tenant_id, job_id):
         # Count durable receipts rather than incrementing a counter on retries.
         rows = self.receipts(tenant_id, job_id=job_id)
@@ -445,6 +548,129 @@ class DynamoStore:
         status = "completed" if len(rows) == job.get("row_count") else "normalizing"
         self.update_job(tenant_id, job_id, status=status, counts=counts)
         return counts
+
+    def record_source_collection(
+        self, tenant_id, source_id, job_id, kind, status, error_code=None, now=None
+    ):
+        """Record extractor health using trusted job order and conditional writes.
+
+        Success means all extracted rows were enqueued, not that Normalizer
+        accepted every row. Old jobs can improve success history but never
+        replace the current run, and a successful run cannot regress.
+        """
+        if kind not in ("csv", "api", "web") or status not in (
+            "running", "retrying", "succeeded", "failed"
+        ):
+            raise InvalidRecord("invalid_collection_status")
+        if error_code is not None and (
+            not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,95}", error_code)
+        ):
+            raise InvalidRecord("invalid_collection_error_code")
+        tenant_id, source_id, job_id = map(identifier, (tenant_id, source_id, job_id))
+        self.tenant(tenant_id)
+        source = self.get(tenant_id, "SOURCE#" + source_id)
+        job = self.get(tenant_id, "JOB#" + job_id)
+        allowed_states = ["queued", "extracting", "normalizing"]
+        if status == "succeeded":
+            allowed_states.append("completed")
+        elif status == "failed":
+            allowed_states.append("failed")
+        if (
+            not source or source.get("kind") != kind or not source.get("enabled")
+            or not job or job.get("source_id") != source_id or job.get("kind") != kind
+            or job.get("status") not in allowed_states
+        ):
+            return False
+        at = iso(now or datetime.now(UTC))
+        job_at = iso(timestamp(
+            job.get("collection_job_at") or job.get("scheduled_at") or job.get("created_at") or at
+        ))
+        job_values = {":source": source_id, ":kind": kind, ":at": at, ":job_at": job_at}
+        job_values.update({f":state{i}": value for i, value in enumerate(allowed_states)})
+        state_params = ", ".join(f":state{i}" for i in range(len(allowed_states)))
+        job_update = (
+            "SET collection_job_at = if_not_exists(collection_job_at, :job_at), "
+            "collection_started_at = if_not_exists(collection_started_at, :at)"
+        )
+        if status == "succeeded":
+            job_update += ", collection_succeeded_at = if_not_exists(collection_succeeded_at, :at)"
+        try:
+            job = self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "JOB#" + job_id},
+                UpdateExpression=job_update,
+                ConditionExpression=(
+                    "attribute_exists(pk) AND source_id = :source AND kind = :kind "
+                    f"AND #status IN ({state_params})"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues=job_values,
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            return False
+        run_key = job["collection_job_at"] + "#" + job_id
+        values = {
+            ":kind": kind, ":enabled": True, ":run": run_key,
+            ":job_at": job["collection_job_at"], ":job": job_id,
+            ":attempt": job["collection_started_at"], ":status": status,
+            ":success": "succeeded",
+        }
+        same_job_guard = "collection_status <> :success"
+        if status in ("running", "retrying"):
+            same_job_guard += " AND collection_status <> :failed"
+            values[":failed"] = "failed"
+        update = (
+            "SET collection_job_key = :run, collection_job_at = :job_at, "
+            "last_job_id = :job, last_attempt_at = :attempt, collection_status = :status"
+        )
+        if status in ("retrying", "failed"):
+            update += ", last_error_code = :error"
+            values[":error"] = error_code or kind + "_worker_error"
+        else:
+            update += " REMOVE last_error_code"
+        changed = False
+        try:
+            self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "SOURCE#" + source_id},
+                UpdateExpression=update,
+                ConditionExpression=(
+                    "attribute_exists(pk) AND kind = :kind AND enabled = :enabled AND "
+                    "(attribute_not_exists(collection_job_key) OR collection_job_key < :run OR "
+                    f"(collection_job_key = :run AND last_job_id = :job AND ({same_job_guard})))"
+                ),
+                ExpressionAttributeValues=values,
+            )
+            changed = True
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            pass
+        if status == "succeeded":
+            # Independent monotonic history: a late older success may fill a gap
+            # while a newer job is running, without changing its current status.
+            try:
+                self.control.update_item(
+                    Key={"pk": pk(tenant_id), "sk": "SOURCE#" + source_id},
+                    UpdateExpression=(
+                        "SET last_success_at = :success_at, last_success_job_id = :job, "
+                        "last_success_job_at = :job_at, collection_success_key = :run"
+                    ),
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND kind = :kind AND enabled = :enabled "
+                        "AND (attribute_not_exists(collection_success_key) OR collection_success_key < :run) "
+                        "AND (attribute_not_exists(last_success_at) OR last_success_at <= :success_at)"
+                    ),
+                    ExpressionAttributeValues={
+                        ":kind": kind, ":enabled": True, ":run": run_key,
+                        # Timestamp the SOURCE confirmation independently. The
+                        # JOB's first success may predate an older job whose
+                        # history write won while this write was being retried.
+                        ":success_at": at,
+                        ":job": job_id, ":job_at": job["collection_job_at"],
+                    },
+                )
+                changed = True
+            except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+                pass
+        return changed
 
     def active_tenants(self):
         # Small control table only; never scan the observations table. Paginate every scan.
@@ -471,6 +697,7 @@ class DynamoStore:
         try:
             self.control.put_item(
                 Item={
+                    "created_at": iso(datetime.now(UTC)),
                     **fields,
                     "job_id": identifier(job_id),
                     "tenant_id": tenant_id,

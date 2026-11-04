@@ -68,7 +68,7 @@ def test_claude_client_graceful_fallback(monkeypatch):
 
     monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", unavailable)
     client = ClaudeClient(api_key="bad-key", mock_mode=False)
-    # Simulate failed API call
+    # Exercise the failure path without calling an external, potentially paid API.
     summary_data = {
         "tenant_id": "tenant-a",
         "period": "2026-10-19",

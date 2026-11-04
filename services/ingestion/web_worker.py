@@ -1,6 +1,5 @@
 """Static HTML extractor adapter for permitted sources."""
 
-import json
 import logging
 import os
 import re
@@ -16,8 +15,10 @@ from marketdata.contracts import AccessDenied, InvalidRecord, identifier, iso, t
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
+from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
 from services.ingestion.safe_http import open_public
+from services.ingestion.snapshot import SourceSnapshots
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -289,8 +290,7 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
 def parse_html_payload(data, observed_at=None):
     if len(data) > MAX_BYTES:
         raise InvalidRecord("html_response_exceeds_1_mib")
-    captured_at = iso(timestamp(observed_at)) if observed_at is not None else None
-    fallback_observed_at = captured_at or iso(datetime.now(UTC))
+    fallback_observed_at = observed_at if observed_at is not None else iso(datetime.now(UTC))
     try:
         html_str = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -318,7 +318,7 @@ def parse_html_payload(data, observed_at=None):
         price_value = _effective_price(row)
         if not source_sku or not price_value:
             raise InvalidRecord("missing_required_html_fields")
-        observed_value = captured_at or _present_value(row.get("observed_at")) or fallback_observed_at
+        observed_value = _present_value(row.get("observed_at")) or fallback_observed_at
         try:
             normalized_observed_at = iso(timestamp(observed_value))
         except InvalidRecord as exc:
@@ -338,7 +338,7 @@ def parse_html_payload(data, observed_at=None):
     return validated_rows
 
 
-def process_event(event, store, sqs, transform_queue, fetcher=None):
+def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=None):
     fetch = fetcher or default_fetcher
 
     if event.get("schema_version") != 1:
@@ -355,53 +355,54 @@ def process_event(event, store, sqs, transform_queue, fetcher=None):
         raise AccessDenied("job_not_found")
     if job.get("source_id") != source_id or job.get("kind") != "web":
         raise AccessDenied("web_job_required")
+    store.tenant(tenant_id)
+    if job.get("status") == "completed":
+        store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
+        return
 
     source = store.get(tenant_id, "SOURCE#" + source_id)
     if not source or source.get("kind") != "web" or not source.get("enabled"):
         store.tenant(tenant_id)
-        store.update_job(
-            tenant_id, job_id, status="failed", error="source_disabled_or_missing", row_count=0
+        store.fail_source_job(tenant_id, job_id, source_id, "web", "source_disabled_or_missing")
+        return
+    if job.get("status") == "failed":
+        store.record_source_collection(
+            tenant_id, source_id, job_id, "web", "failed",
+            collection_error_code(job.get("error"), "web"),
         )
         return
     store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
+    store.record_source_collection(tenant_id, source_id, job_id, "web", "running")
 
-    url = source.get("url") or source.get("endpoint")
-    if not url:
-        store.update_job(tenant_id, job_id, status="failed", error="missing_web_url", row_count=0)
-        return
+    def load_rows():
+        url = source.get("url") or source.get("endpoint")
+        if not url:
+            raise InvalidRecord("missing_web_url")
+        raw_data = fetch(url, headers=source.get("headers"))
+        # Source timestamps take precedence. Missing times use the job schedule
+        # (or UTC now) once, then remain immutable in the persisted snapshot.
+        return parse_html_payload(
+            raw_data, observed_at=job.get("scheduled_at") or event.get("scheduled_at")
+        )
 
     try:
-        raw_data = fetch(url, headers=source.get("headers"))
-        # Dispatcher supplies the immutable schedule slot so retries of one job
-        # retain the same observation timestamp. Manual jobs fall back to UTC now.
-        rows = parse_html_payload(raw_data, observed_at=event.get("scheduled_at"))
+        snapshot = (snapshots or SourceSnapshots()).get_or_create(event, job, load_rows)
     except RetryableFetchError:
         raise
     except (InvalidRecord, AccessDenied) as exc:
-        store.update_job(tenant_id, job_id, status="failed", error=str(exc), row_count=0)
+        code = collection_error_code(exc, "web")
+        if store.fail_source_job(tenant_id, job_id, source_id, "web", code, require_unbound=True):
+            store.record_source_collection(tenant_id, source_id, job_id, "web", "failed", code)
         return
 
-    values = [
-        {
-            "schema_version": 1,
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "job_id": job_id,
-            "row_number": i,
-            "record": row,
-        }
-        for i, row in enumerate(rows, 1)
-    ]
-
-    # Validate size limits (32 KiB per row)
-    if any(len(json.dumps(v, ensure_ascii=False).encode()) > 32 * 1024 for v in values):
-        store.update_job(
-            tenant_id, job_id, status="failed", error="row_exceeds_32_kib", row_count=0
-        )
+    committed_job = store.bind_source_snapshot(
+        tenant_id, job_id, source_id, "web", snapshot.descriptor, len(snapshot.values)
+    )
+    if committed_job["status"] == "completed":
+        store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
         return
-
-    store.update_job(tenant_id, job_id, row_count=len(rows), status="normalizing")
-    send_rows(sqs, transform_queue, values)
+    send_rows(sqs, transform_queue, snapshot.values)
+    store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
 
 
 def process_batch(event, store, sqs, queue, fetcher=None, input_queue_url=None):
