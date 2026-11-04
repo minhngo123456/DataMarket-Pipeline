@@ -11,6 +11,7 @@ from services.api.app import handler
 from services.reporting.aggregator import handler as aggregator_handler
 from services.reporting.aggregator import process_report_job
 from services.reporting.claude_client import ClaudeClient, GeminiClient, build_report_client
+from services.reporting.templates.prompt_templates import build_claude_prompt
 from tests.conftest import NOW
 from tests.test_access import add_user
 from tests.test_api import make_event
@@ -179,6 +180,81 @@ def test_report_client_prefers_gemini_then_claude_then_mock(monkeypatch):
     gemini = build_report_client()
     assert gemini.provider == "gemini" and gemini.mock_mode is False
     assert gemini.secret_arn == "arn:gemini"
+
+
+VENDOR_PRICES = [
+    {"product_id": "phone", "source_id": "vendor-a", "price": Decimal("100")},
+    {"product_id": "phone", "source_id": "vendor-b", "price": Decimal("110")},
+    {"product_id": "case", "source_id": "vendor-a", "price": Decimal("50")},
+]
+
+
+def test_prompt_without_a_reference_compares_sources_only():
+    prompt = build_claude_prompt({
+        "stats": {"total_products": 2, "total_observations": 3, "reference_source": None},
+        "prices": VENDOR_PRICES,
+    })
+    assert "Nguồn có dữ liệu: vendor-a, vendor-b" in prompt
+    assert "Nguồn tham chiếu: Không có" in prompt
+    assert "- Sản phẩm phone: vendor-a 100 VND, vendor-b 110 VND; chênh lệch cao nhất so với thấp nhất: 10.00 %" in prompt
+    assert "- Sản phẩm case: vendor-a 50 VND\n" in prompt
+    assert "ổn định" not in prompt
+    assert "Chênh lệch so với giá tham chiếu" not in prompt
+    assert "internal" not in prompt
+
+
+def test_prompt_with_a_reference_lists_its_differences():
+    prompt = build_claude_prompt({
+        "stats": {"reference_source": "internal"},
+        "prices": VENDOR_PRICES,
+        "top_changes": [{"product_id": "phone", "source_id": "vendor-b", "price": Decimal("110"),
+                         "change_percent": Decimal("10.00")}],
+    })
+    assert "Nguồn tham chiếu: internal" in prompt
+    assert "nguồn vendor-b có giá 110 VND (Chênh lệch: +10.00 %)" in prompt
+
+
+def test_prompt_with_no_data_says_so():
+    prompt = build_claude_prompt({"stats": {}, "stale_sources": ["vendor-a"]})
+    assert "Không có quan sát giá hợp lệ" in prompt
+    assert "Nguồn bị thiếu hoặc dữ liệu cũ quá 24h: vendor-a" in prompt
+    assert "ổn định" not in prompt
+
+
+def test_aggregator_gives_the_model_real_sources_and_no_invented_reference(store, monkeypatch):
+    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
+    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
+    boto3.client("s3").create_bucket(Bucket="reports-bucket-test")
+    store.observations.put_item(
+        Item={
+            "pk": "T#tenant-a#P#phone",
+            "sk": "vendor#2026-10-19T00:30:00Z#obs-1",
+            "gsi1pk": "T#tenant-a#DAY#20261019",
+            "gsi1sk": "2026-10-19T00:30:00Z#phone#vendor#obs-1",
+            "tenant_id": "tenant-a",
+            "product_id": "phone",
+            "source_id": "vendor",
+            "observation_id": "obs-1",
+            "price": Decimal("100"),
+            "currency": "VND",
+            "price_basis": "tax_included",
+            "observed_at": "2026-10-19T00:30:00Z",
+            "expires_at": int(NOW.timestamp()) + 86400,
+        }
+    )
+    seen = {}
+
+    class FakeClient:
+        def generate_report_summary(self, summary):
+            seen.update(summary)
+            return {"text": "t", "status": "ai_generated", "provider": "gemini", "model": "m"}
+
+    process_report_job(
+        {"tenant_id": "tenant-a", "job_id": "job-prices", "scheduled_at": iso(NOW)}, store, claude_client=FakeClient()
+    )
+
+    assert seen["stats"]["reference_source"] is None
+    assert seen["prices"] == [{"product_id": "phone", "source_id": "vendor", "price": Decimal("100")}]
 
 
 def test_aggregator_records_the_provider_and_model(store, monkeypatch):

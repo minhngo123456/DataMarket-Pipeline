@@ -69,9 +69,10 @@ def process_report_job(
         "stats": {
             "total_products": len(products_seen),
             "total_observations": len(rows),
-            "reference_source": "internal",
+            "reference_source": "internal" if "internal" in active_sources else None,
             "anomaly_count": len(anomalies),
         },
+        "prices": [{k: r[k] for k in ("product_id", "source_id", "price")} for r in rows],
         "anomalies": anomalies,
         "stale_sources": stale_sources,
         "top_changes": top_changes[:5],
