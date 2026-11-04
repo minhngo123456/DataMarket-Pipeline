@@ -23,8 +23,10 @@ from scripts.e2e_failures import (
     start_job,
     tenant_messages,
     terminal_job_problem,
+    unused_topic_arn,
 )
 from scripts.e2e_permissions import user_sub
+from services.reporting.notification import tenant_channel
 
 REAL_TENANT = "group07"
 UNUSED_TOPIC = "arn:aws:sns:us-east-1:123456789012:none"
@@ -82,6 +84,18 @@ def test_poll_stops_at_the_first_truthy_value_or_the_deadline():
 
     ticks = iter([0, 5, 11])
     assert poll(lambda: None, timeout=10, sleep=lambda _: None, clock=lambda: next(ticks)) is None
+
+
+def test_unused_topic_passes_the_notification_namespace_check(monkeypatch):
+    monkeypatch.setenv("NOTIFICATION_STACK_NAME", "marketdata-dev")
+    monkeypatch.setenv("AWS_REGION", "ap-southeast-1")
+    monkeypatch.setenv("AWS_ACCOUNT_ID", "123456789012")
+    stack_id = "arn:aws:cloudformation:ap-southeast-1:123456789012:stack/marketdata-dev/abc"
+
+    arn = unused_topic_arn(stack_id, "marketdata-dev")
+
+    assert arn == f"arn:aws:sns:ap-southeast-1:123456789012:marketdata-dev-tenant-{TENANT}"
+    assert tenant_channel(TENANT, arn, "sns") == arn
 
 
 def test_plan_names_only_the_test_tenant():
