@@ -1,6 +1,6 @@
 # Trạng thái triển khai của nhóm
 
-Cập nhật ngày 04/11/2026, cho stack `marketdata-dev` tại Region `ap-southeast-1`. Code đang chạy là bản hợp nhất từ `main`, không có thay đổi Lambda sau lần deploy ngày 04/11. Stack `marketdata-hoang-dev` tại `us-east-1` là môi trường riêng của Hoàng; kết quả của stack đó nằm trong [bàn giao của Hoàng](hoang-final-handover.md).
+Cập nhật ngày 04/11/2026, cho stack `marketdata-dev` tại Region `ap-southeast-1`. Code đang chạy gồm bản hợp nhất, báo cáo Gemini và tự đăng ký tài khoản. Stack `marketdata-hoang-dev` tại `us-east-1` là môi trường riêng của Hoàng; kết quả của stack đó nằm trong [bàn giao của Hoàng](hoang-final-handover.md).
 
 ## Cấu hình đang chạy
 
@@ -10,23 +10,27 @@ Cập nhật ngày 04/11/2026, cho stack `marketdata-dev` tại Region `ap-south
 | `WebOrigin`, `LocalDevOrigin` | URL Amplify ở trên, `http://localhost:5173` |
 | `EnableCloudFront` | `DISABLED`; lần bật trên tài khoản này rollback vì tài khoản chưa được xác minh |
 | `ScheduleState` | `ENABLED`: lấy dữ liệu mỗi 6 giờ, báo cáo 08:00 giờ Việt Nam |
-| `AnthropicSecretArn` | Trống; báo cáo có `ai_status=mock_generated`, không gọi Claude |
+| `GeminiSecretArn` | Secret `marketdata-dev/gemini`, JSON có trường `api_key`; báo cáo dùng model `gemini-3.5-flash-lite` (`GeminiModel`) |
+| `AnthropicSecretArn` | Trống; không gọi Claude |
+| Đăng ký | Tự đăng ký bằng email và mã xác nhận (`AllowAdminCreateUserOnly=false`); mỗi tài khoản thuộc 1 workspace |
 | `AlarmEmail` | Trống; 7 alarm gắn `AlarmTopic` nhưng topic chưa có người nhận, nên chỉ xem được trong CloudWatch |
 | Tenant | `group07`, 2 member, 3 source |
 | Email báo cáo | Stack `marketdata-dev-tenant-group07`, 1 subscription đã xác nhận |
 
 ## Kết quả kiểm thử
 
-Chạy ngày 04/11/2026 sau khi deploy bản hợp nhất. Dữ liệu thử đã được xóa và kiểm tra lại bằng dry-run.
+Chạy ngày 04/11/2026 sau khi deploy bản hợp nhất, trước khi thêm Gemini và tự đăng ký, trừ các dòng có ghi khác. Dữ liệu thử đã được xóa và kiểm tra lại bằng dry-run.
 
 | Kiểm thử | Lệnh | Kết quả |
 | --- | --- | --- |
-| Python | `pytest -q` | 331 passed |
-| Web | `pnpm test` | 34 passed |
+| Python, bản hiện tại | `pytest -q` | 366 passed |
+| Web, bản hiện tại | `pnpm test` | 42 passed |
 | CSV đầu cuối | `scripts.smoke_test_aws --new` | 100 dòng: 90 accepted, 0 pending, 10 rejected; tenant thứ hai có 0 quan sát; phát lại không đổi kết quả |
 | Quyền và cách ly tenant | `scripts.e2e_permissions --yes` | 21 PASS, 0 FAIL, 1 SKIP |
 | Tình huống lỗi | `scripts.e2e_failures --yes` | 17 PASS, 0 FAIL |
 | Email | `aws sns publish` tới topic của `group07` | Người nhận xác nhận email đã đến |
+| Gemini, bản hiện tại | 1 báo cáo qua API trên tenant tạm, CSV demo 2 nguồn | `ai_status=ai_generated`, `ai_provider=gemini`; phần văn bản đã đối chiếu (1000 ký tự đầu) khớp dữ liệu, phần khuyến nghị chưa đối chiếu |
+| Tự đăng ký, bản hiện tại | Thao tác tay ở web chạy cục bộ | Tài khoản `CONFIRMED`, workspace mới có đúng 1 Admin và không có dữ liệu của `group07` |
 
 SKIP ở kiểm thử quyền là phần che header, vì các source của `group07` không có header. Phần này được kiểm tra thật trong `e2e_failures`, trên tenant tạm.
 
@@ -38,14 +42,16 @@ SKIP ở kiểm thử quyền là phần che header, vì các source của `grou
 | URL trả 404 | Job `failed` với `api_http_error_404`, không retry, không vào DLQ |
 | URL không kết nối được | Hết giới hạn retry thì job `failed`, message vào `APIQueueDLQ`, `APIQueueDLQAlarm` chuyển `ALARM` |
 | Publish SNS thất bại | `NOTIF#` ghi `failed` và `sns_publish_failed`, `NotificationFunctionErrorsAlarm` chuyển `ALARM` |
-| Báo cáo khi không có key | `status=ready`, `ai_status=mock_generated`, có file trong S3 |
+| Báo cáo khi không có key (trước khi thêm Gemini) | `status=ready`, `ai_status=mock_generated`, có file trong S3 |
 | Header của source | Admin đọc được giá trị thật, Viewer thấy `***`; gửi lại `***` không đổi giá trị đã lưu |
 
 ## Giới hạn đã biết
 
-- **Báo cáo chưa dùng AI.** Không có key thì báo cáo chỉ gồm số liệu và ghi rõ "Dữ liệu thử nghiệm; chưa gọi Claude API", trạng thái vẫn là `ready`. Không được mô tả các báo cáo này là do AI tạo.
-- **Nhánh Claude lỗi thật chưa chạy trên AWS.** `fallback_quantitative` chỉ có unit test, vì cần đặt key vào stack.
-- **Báo cáo theo lịch trên bản hợp nhất chưa được kiểm chứng.** Báo cáo 08:00 ngày 04/11 chạy trên code trước khi hợp nhất: `NOTIF#` ghi `sent`, nhưng báo cáo có 0 sản phẩm và cả 3 nguồn bị coi là quá hạn.
+- **Đăng ký mở cho mọi người có link.** Mỗi workspace có báo cáo 08:00 và gọi Gemini mỗi ngày, kể cả khi chưa có dữ liệu, nên quota Gemini có thể bị tiêu hao. Chưa có giới hạn tổng số tài khoản hoặc workspace.
+- **Key Gemini gói miễn phí.** Nội dung gửi đi có thể được Google dùng để cải thiện sản phẩm theo điều khoản gói không trả phí; không gửi dữ liệu giá thật của doanh nghiệp qua gói này.
+- **Báo cáo Gemini theo lịch của `group07` chưa được kiểm chứng.** Đã thử trên tenant tạm; lần theo lịch đầu tiên là 08:00 ngày 05/11. Báo cáo 08:00 ngày 04/11 chạy trên code cũ: `NOTIF#` ghi `sent`, nhưng báo cáo có 0 sản phẩm và cả 3 nguồn bị coi là quá hạn.
+- **Lỗi Gemini thật chỉ có unit test.** `fallback_quantitative` đã xảy ra trên AWS một lần do secret rỗng; lỗi từ phía API Gemini chưa được thử.
+- **Các kiểm thử quyền và lỗi chưa chạy lại trên bản hiện tại.** `e2e_permissions` và `e2e_failures` chạy trước khi thêm Gemini và tự đăng ký.
 - **Dữ liệu demo nhanh quá hạn.** Giá cũ hơn 24 giờ bị loại khỏi ma trận. File `vendor-c` ghi cố định `observed_at` là 02/11, nên chạy lại theo lịch không tạo giá mới. Trước demo cần tải CSV mới và cập nhật file này.
 - **`NotificationFunction` không có DLQ.** Sau khi hết retry bất đồng bộ, sự kiện bị bỏ; chỉ còn bản ghi `NOTIF#` và alarm.
 - **API lưu cả URL địa chỉ nội bộ.** `POST /sources` nhận `169.254.169.254`; việc chặn diễn ra ở worker lúc lấy dữ liệu.
@@ -67,6 +73,10 @@ aws dynamodb update-item --region ap-southeast-1 --profile marketdata-dev --tabl
 ```
 
 Tên topic phải đúng `<stack>-tenant-<tenant>`, nếu không `NotificationFunction` sẽ từ chối. Tenant chưa có `sns_topic_arn` thì báo cáo vẫn được tạo nhưng không gửi email, và không tự gửi lại sau khi thêm kênh.
+
+## Thêm thành viên vào workspace
+
+Người dùng tự tạo tài khoản ở trang đăng nhập trước, rồi Admin nhập đúng email đó ở trang Thành viên. Hệ thống không tạo tài khoản và không gửi email mời. Tài khoản chưa xác nhận hoặc đã thuộc workspace khác sẽ bị từ chối.
 
 ## Chạy lại kiểm thử
 
