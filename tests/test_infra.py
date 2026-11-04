@@ -106,6 +106,8 @@ def test_report_credentials_are_arns_and_tenant_resources_are_namespaced():
     assert "ANTHROPIC_API_KEY" not in env
     assert "SNS_TOPIC_ARN" not in env and "SLACK_WEBHOOK_URL" not in env
     assert env["ANTHROPIC_SECRET_ARN"] == {"Ref": "AnthropicSecretArn"}
+    assert env["GEMINI_SECRET_ARN"] == {"Ref": "GeminiSecretArn"}
+    assert "GEMINI_API_KEY" not in env and "GeminiApiKey" not in template["Parameters"]
     assert env["NOTIFICATION_FUNCTION_NAME"] == {"Ref": "NotificationFunction"}
     notification = resources["NotificationFunction"]["Properties"]
     notification_env = notification["Environment"]["Variables"]

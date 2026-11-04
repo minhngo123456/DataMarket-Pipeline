@@ -170,6 +170,15 @@ def test_secret_access_is_scoped_and_conditional():
     assert statements[0]["Resource"] == {"Ref": "AnthropicSecretArn"}
     assert statements[0]["Condition"]["StringEquals"]["aws:ResourceAccount"] == {"Ref": "AWS::AccountId"}
     assert template["Conditions"]["HasAnthropicSecret"] == {"Fn::Not": [{"Fn::Equals": [{"Ref": "AnthropicSecretArn"}, ""]}]}
+    gemini = resources["ReportAggregatorGeminiSecretPolicy"]
+    assert gemini["Condition"] == "HasGeminiSecret"
+    assert gemini["Properties"]["RoleName"] == {"Ref": "ReportAggregatorExecutionRole"}
+    gemini_statements = gemini["Properties"]["PolicyDocument"]["Statement"]
+    assert len(gemini_statements) == 1
+    assert gemini_statements[0]["Action"] == ["secretsmanager:GetSecretValue"]
+    assert gemini_statements[0]["Resource"] == {"Ref": "GeminiSecretArn"}
+    assert gemini_statements[0]["Condition"]["StringEquals"]["aws:ResourceAccount"] == {"Ref": "AWS::AccountId"}
+    assert template["Conditions"]["HasGeminiSecret"] == {"Fn::Not": [{"Fn::Equals": [{"Ref": "GeminiSecretArn"}, ""]}]}
     notification_secrets = [s for s in role_statements(resources, "NotificationFunctionRole")
                             if "secretsmanager:GetSecretValue" in s["Action"]]
     assert len(notification_secrets) == 1

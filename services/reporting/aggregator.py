@@ -14,7 +14,7 @@ from botocore.exceptions import ClientError
 from marketdata.contracts import iso, stable_id, timestamp
 from marketdata.queries import price_matrix
 from marketdata.repository import DynamoStore
-from services.reporting.claude_client import ClaudeClient
+from services.reporting.claude_client import build_report_client
 from services.reporting.notification import dispatch_notification
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def process_report_job(
     # Record daily lock if not already recorded (e.g. if invoked by scheduled dispatcher)
     store.acquire_report_lock(tenant_id, period, job_id=job_id, triggered_by="aggregator")
 
-    ai_client = claude_client or ClaudeClient()
+    ai_client = claude_client or build_report_client()
     ai_result = ai_client.generate_report_summary(summary_data)
 
     # 4. Save full report artifact into S3
@@ -118,6 +118,8 @@ def process_report_job(
         "created_at": iso(datetime.now(UTC)),
         "summary": ai_result.get("text"),
         "ai_status": ai_result.get("status"),
+        "ai_provider": ai_result.get("provider"),
+        "ai_model": ai_result.get("model"),
         "metrics": summary_data["stats"],
         "anomalies": anomalies,
         "stale_sources": stale_sources,
@@ -145,6 +147,8 @@ def process_report_job(
             "period": period,
             "status": "ready" if ai_result.get("status") != "fallback_quantitative" else "partial",
             "ai_status": ai_result.get("status"),
+            "ai_provider": ai_result.get("provider"),
+            "ai_model": ai_result.get("model"),
             "summary": ai_result.get("text")[:1000],  # preview
             "s3_key": s3_key,
             "created_at": iso(now_ts),
