@@ -10,7 +10,7 @@ from marketdata.contracts import iso
 from services.api.app import handler
 from services.reporting.aggregator import handler as aggregator_handler
 from services.reporting.aggregator import process_report_job
-from services.reporting.claude_client import ClaudeClient
+from services.reporting.claude_client import ClaudeClient, GeminiClient, build_report_client
 from tests.conftest import NOW
 from tests.test_access import add_user
 from tests.test_api import make_event
@@ -78,6 +78,130 @@ def test_claude_client_graceful_fallback(monkeypatch):
     assert result["status"] == "fallback_quantitative"
     assert "Số Liệu" in result["text"]
     assert "Claude API" in result["text"]
+
+
+SUMMARY = {"tenant_id": "tenant-a", "period": "2026-10-19", "stats": {"total_products": 2, "total_observations": 5}}
+
+
+def test_gemini_client_sends_the_key_only_in_its_header(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent.update(url=req.full_url, key=req.get_header("X-goog-api-key"), body=json.loads(req.data), timeout=timeout)
+        return _FakeResponse({
+            "candidates": [{"content": {"parts": [{"text": "plan", "thought": True}, {"text": "Báo cáo thật"}]}}],
+            "usageMetadata": {"totalTokenCount": 9},
+        })
+
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", fake_urlopen)
+    result = GeminiClient(api_key="secret-key").generate_report_summary(SUMMARY)
+
+    assert sent["url"] == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+    )
+    assert sent["key"] == "secret-key"
+    assert "secret-key" not in json.dumps(sent["body"])
+    assert sent["body"]["contents"][0]["role"] == "user"
+    assert sent["body"]["generationConfig"] == {"maxOutputTokens": 4000}
+    assert sent["timeout"] == 90
+    assert result["text"] == "Báo cáo thật"
+    assert result["status"] == "ai_generated"
+    assert result["provider"] == "gemini"
+    assert result["model"] == "gemini-3.5-flash-lite"
+
+
+def test_gemini_model_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.6-flash")
+    assert GeminiClient(api_key="k").model == "gemini-3.6-flash"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"promptFeedback": {"blockReason": "SAFETY"}},
+        {"candidates": [{"finishReason": "MAX_TOKENS", "content": {}}]},
+        {"candidates": [{"content": {"parts": [{"text": "only thinking", "thought": True}]}}]},
+    ],
+)
+def test_gemini_without_visible_text_falls_back(monkeypatch, body):
+    monkeypatch.setattr(
+        "services.reporting.claude_client.urllib.request.urlopen", lambda req, timeout: _FakeResponse(body)
+    )
+    result = GeminiClient(api_key="k").generate_report_summary(SUMMARY)
+    assert result["status"] == "fallback_quantitative"
+    assert "Gemini API" in result["text"]
+    assert result["provider"] == "gemini"
+
+
+def test_gemini_failure_does_not_leak_the_key(monkeypatch, caplog):
+    def unavailable(req, timeout):
+        raise TimeoutError(f"failed with {req.get_header('X-goog-api-key')}")
+
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", unavailable)
+    result = GeminiClient(api_key="secret-key").generate_report_summary(SUMMARY)
+
+    assert result["status"] == "fallback_quantitative"
+    assert result["error_detail"] == "TimeoutError"
+    assert "secret-key" not in result["text"]
+    assert "secret-key" not in caplog.text
+
+
+def test_gemini_reads_its_key_from_the_secret_arn(store, monkeypatch):
+    secrets = boto3.client("secretsmanager", region_name="us-east-1")
+    arn = secrets.create_secret(Name="gemini", SecretString=json.dumps({"api_key": "from-secret"}))["ARN"]
+    keys = []
+
+    def fake_urlopen(req, timeout):
+        keys.append(req.get_header("X-goog-api-key"))
+        return _FakeResponse({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", fake_urlopen)
+    client = GeminiClient(secret_arn=arn, secrets_client=secrets)
+
+    assert client.generate_report_summary(SUMMARY)["status"] == "ai_generated"
+    assert keys == ["from-secret"]
+
+
+def test_report_client_prefers_gemini_then_claude_then_mock(monkeypatch):
+    monkeypatch.delenv("GEMINI_SECRET_ARN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_SECRET_ARN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mock = build_report_client()
+    assert mock.mock_mode is True
+    assert mock.generate_report_summary(SUMMARY)["status"] == "mock_generated"
+
+    monkeypatch.setenv("ANTHROPIC_SECRET_ARN", "arn:anthropic")
+    claude = build_report_client()
+    assert claude.provider == "anthropic" and claude.mock_mode is False
+
+    monkeypatch.setenv("GEMINI_SECRET_ARN", "arn:gemini")
+    gemini = build_report_client()
+    assert gemini.provider == "gemini" and gemini.mock_mode is False
+    assert gemini.secret_arn == "arn:gemini"
+
+
+def test_aggregator_records_the_provider_and_model(store, monkeypatch):
+    monkeypatch.delenv("GEMINI_SECRET_ARN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_SECRET_ARN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
+    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
+    s3 = boto3.client("s3")
+    s3.create_bucket(Bucket="reports-bucket-test")
+
+    class FakeClient:
+        def generate_report_summary(self, summary):
+            return {"text": "t", "status": "ai_generated", "provider": "gemini", "model": "gemini-x"}
+
+    result = process_report_job(
+        {"tenant_id": "tenant-a", "job_id": "job-ai", "scheduled_at": iso(NOW)}, store, claude_client=FakeClient()
+    )
+
+    record = store.get("tenant-a", "REPORT#" + result["report_id"])
+    assert (record["ai_provider"], record["ai_model"]) == ("gemini", "gemini-x")
+    stored = json.loads(s3.get_object(Bucket="reports-bucket-test", Key=record["s3_key"])["Body"].read())
+    assert (stored["ai_provider"], stored["ai_model"]) == ("gemini", "gemini-x")
 
 
 def test_aggregator_worker_full_pipeline(store, monkeypatch):

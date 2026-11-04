@@ -23,7 +23,7 @@ Bản hợp nhất ngày 04/11/2026 thêm NotificationFunction riêng, retry t�
 
 ## Khóa Claude và kênh báo cáo theo tenant
 
-Không truyền API key qua tham số CloudFormation. Tạo secret trong Secrets Manager cùng tài khoản/Region, lưu JSON có trường `api_key`, rồi truyền ARN vào `AnthropicSecretArn`. Khi để trống, runtime không gọi Claude thật. Template mặc định dành cho secret dùng khóa quản lý bởi Secrets Manager; nếu dùng KMS key riêng, cần bổ sung quyền decrypt trên key đó.
+Không truyền API key qua tham số CloudFormation. Tạo secret trong Secrets Manager cùng tài khoản/Region, lưu JSON có trường `api_key`, rồi truyền ARN vào `AnthropicSecretArn`. Khi để trống, runtime không gọi Claude thật. Với Gemini, secret có cùng định dạng và ARN truyền vào `GeminiSecretArn`; tham số này được ưu tiên hơn `AnthropicSecretArn`, còn model chọn bằng `GeminiModel`. Template mặc định dành cho secret dùng khóa quản lý bởi Secrets Manager; nếu dùng KMS key riêng, cần bổ sung quyền decrypt trên key đó.
 
 `tenant-notifications.yaml` tạo một topic và một Slack secret cho đúng một tenant. Tạo stack riêng cho từng tenant:
 

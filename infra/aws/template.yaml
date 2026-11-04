@@ -31,6 +31,17 @@ Parameters:
     AllowedPattern: ^$|^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$
     Description: Existing same-account/Region Secrets Manager secret with JSON api_key; empty disables
       live AI.
+  GeminiSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$
+    Description: Existing same-account/Region Secrets Manager secret with JSON api_key; takes priority
+      over AnthropicSecretArn when set.
+  GeminiModel:
+    Type: String
+    Default: gemini-3.5-flash-lite
+    AllowedPattern: ^[a-z0-9.-]+$
+    Description: Gemini model id used when GeminiSecretArn is set.
   AlarmEmail:
     Type: String
     Default: ''
@@ -49,6 +60,11 @@ Conditions:
     Fn::Not:
     - Fn::Equals:
       - Ref: AnthropicSecretArn
+      - ''
+  HasGeminiSecret:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: GeminiSecretArn
       - ''
   HasAlarmEmail:
     Fn::Not:
@@ -1035,6 +1051,10 @@ Resources:
             Ref: ReportsBucket
           ANTHROPIC_SECRET_ARN:
             Ref: AnthropicSecretArn
+          GEMINI_SECRET_ARN:
+            Ref: GeminiSecretArn
+          GEMINI_MODEL:
+            Ref: GeminiModel
           NOTIFICATION_FUNCTION_NAME:
             Ref: NotificationFunction
       Events:
@@ -1133,6 +1153,30 @@ Resources:
           - secretsmanager:GetSecretValue
           Resource:
             Ref: AnthropicSecretArn
+          Condition:
+            StringEquals:
+              aws:ResourceAccount:
+                Ref: AWS::AccountId
+  ReportAggregatorGeminiSecretPolicy:
+    Type: AWS::IAM::RolePolicy
+    Condition: HasGeminiSecret
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Read only the Gemini secret selected by the deployment parameter.
+        must:
+        - Use the complete ARN of a secret in this account and Region.
+    Properties:
+      RoleName:
+        Ref: ReportAggregatorExecutionRole
+      PolicyName: ReportAggregatorReadGeminiSecret
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+            Ref: GeminiSecretArn
           Condition:
             StringEquals:
               aws:ResourceAccount:
