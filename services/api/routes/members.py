@@ -6,7 +6,7 @@ import os
 import boto3
 from boto3.dynamodb.conditions import Key
 
-from marketdata.contracts import AccessDenied, QuotaExceeded, identifier, stable_id
+from marketdata.contracts import AccessDenied, Conflict, QuotaExceeded, identifier, stable_id
 from marketdata.repository import DynamoStore, pk
 from services.api.auth import AuthContext
 from services.api.response import error, ok
@@ -57,14 +57,16 @@ def cognito_user_id(email: str, cognito=None) -> str | None:
             Username=email,
             UserAttributes=[
                 {"Name": "email", "Value": email},
-                {"Name": "email_verified", "Value": "true"},
             ],
             DesiredDeliveryMediums=["EMAIL"],
         )["User"]
         attributes = user.get("Attributes", [])
     except client.exceptions.UsernameExistsException:
         attributes = client.admin_get_user(UserPoolId=pool_id, Username=email).get("UserAttributes", [])
-    return next((a["Value"] for a in attributes if a["Name"] == "sub"), None)
+    user_id = next((a["Value"] for a in attributes if a["Name"] == "sub"), None)
+    if not user_id:
+        raise Conflict("cognito_user_missing_sub")
+    return user_id
 
 
 def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cognito=None) -> dict:
@@ -77,7 +79,9 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cog
     except json.JSONDecodeError:
         return error("invalid_json", "Request body must be valid JSON", 400)
 
-    email = (body.get("email") or "").strip().lower()
+    if not isinstance(body, dict) or not isinstance(body.get("email"), str):
+        return error("invalid_member_payload", "email and a valid role are required", 400)
+    email = body["email"].strip().lower()
     role = body.get("role", "analyst")
 
     if "@" not in email or role not in ("admin", "analyst", "viewer"):
@@ -102,15 +106,9 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cog
     )
     user_id = identifier(user_id)
 
-    # Add user membership in ControlTable
-    store.control.put_item(
-        Item={"pk": "U#" + user_id, "sk": "MEMBERSHIP", "tenant_id": auth.tenant_id, "status": "active"}
-    )
-    store.put(
-        auth.tenant_id,
-        "MEMBER#" + user_id,
-        {"role": role, "status": "active", "email": email},
-    )
+    # If Cognito succeeds but this transaction fails, the user has no application
+    # membership. Retrying the invitation looks up that Cognito user again.
+    store.save_member(auth.tenant_id, user_id, role, email)
 
     return ok(
         {
@@ -146,6 +144,9 @@ def handle_patch_member(event: dict, store: DynamoStore, auth: AuthContext) -> d
     except json.JSONDecodeError:
         return error("invalid_json", "Request body must be valid JSON", 400)
 
+    if not isinstance(body, dict):
+        return error("invalid_member_payload", "Request body must be an object", 400)
+
     new_role = body.get("role")
     new_status = body.get("status")
 
@@ -158,24 +159,9 @@ def handle_patch_member(event: dict, store: DynamoStore, auth: AuthContext) -> d
     if new_status and new_status not in ("active", "disabled"):
         return error("invalid_status", "status must be one of: active, disabled", 400)
 
-    updated_rec = {
-        **member_rec,
-        "role": new_role if new_role else member_rec.get("role", "viewer"),
-        "status": new_status if new_status else member_rec.get("status", "active"),
-    }
-
-    # Update tenant-side record
-    store.put(auth.tenant_id, "MEMBER#" + user_id, updated_rec)
-
-    # If status changed, also update user membership in ControlTable for immediate revocation
-    if new_status:
-        user_membership = store.control.get_item(
-            Key={"pk": "U#" + user_id, "sk": "MEMBERSHIP"}
-        ).get("Item")
-        if user_membership:
-            store.control.put_item(
-                Item={**user_membership, "status": new_status}
-            )
+    updated_rec = store.save_member(
+        auth.tenant_id, user_id, new_role, None, new_status, must_exist=True,
+    )
 
     return ok({
         "user_id": user_id,
