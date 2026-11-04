@@ -16,7 +16,8 @@ from collections import defaultdict
 import boto3
 from boto3.dynamodb.conditions import Attr
 
-SMOKE_TENANT = re.compile(r"^smoke-[ab]-[0-9a-f]{8}$")
+# Older smoke runs used 8 hex characters; scripts/smoke_test_aws.py now uses 12.
+SMOKE_TENANT = re.compile(r"^smoke-[ab]-(?:[0-9a-f]{8}|[0-9a-f]{12})$")
 TENANT_PK_PREFIX = "T#smoke-"
 COUNT_NAMES = ("control", "memberships", "observations", "s3_versions")
 

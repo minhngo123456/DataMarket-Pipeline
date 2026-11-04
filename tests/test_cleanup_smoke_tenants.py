@@ -40,6 +40,13 @@ def all_versions(s3):
     return response.get("Versions", []) + response.get("DeleteMarkers", [])
 
 
+def test_current_smoke_id_length_matches():
+    assert tenant_from_pk("T#smoke-a-38619e63121f") == "smoke-a-38619e63121f"
+    assert tenant_from_pk("T#smoke-b-38619e63121f#P#phone") == "smoke-b-38619e63121f"
+    assert tenant_from_pk("T#smoke-a-38619e63121") is None
+    assert tenant_from_pk("T#smoke-a-38619e63121f0") is None
+
+
 def test_only_exact_smoke_ids_match():
     assert tenant_from_pk(f"T#{SMOKE}") == SMOKE
     assert tenant_from_pk(f"T#{SMOKE}#P#phone") == SMOKE
