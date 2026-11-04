@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Group 07 - storage, queues, source workers, dispatchers, normalizer
-  the HTTP API for the web app and the AI report aggregator.'
+Description: 'Group 07 MarketData pipeline: private tenant data, queued workers and JWT API; CloudFront
+  is optional.'
 Parameters:
   WebOrigin:
     Type: String
@@ -17,24 +17,25 @@ Parameters:
     AllowedValues:
     - DISABLED
     - ENABLED
-  AnthropicApiKey:
-    Type: String
-    Default: ''
-    NoEcho: true
-    Description: Claude API key for report narratives; empty keeps reports on the
-      rule-based fallback summary.
-  AnthropicSecretName:
-    Type: String
-    Default: ''
-    AllowedPattern: ^[A-Za-z0-9/_+=.@-]*$
-    Description: Name (not ARN) of the AWS Secrets Manager secret holding the Claude API key.
   EnableCloudFront:
     Type: String
     Default: DISABLED
     AllowedValues:
     - DISABLED
     - ENABLED
-    Description: Enable CloudFront distribution. Disabled by default while awaiting AWS account verification.
+    Description: Create CloudFront only when the AWS account is eligible; otherwise use an external/local
+      web origin.
+  AnthropicSecretArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$
+    Description: Existing same-account/Region Secrets Manager secret with JSON api_key; empty disables
+      live AI.
+  AlarmEmail:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^[^\s@]+@[^\s@]+\.[^\s@]+$
+    Description: Optional operations email. Confirm the SNS subscription before testing alarms.
 Conditions:
   UseCloudFront:
     Fn::Equals:
@@ -47,7 +48,12 @@ Conditions:
   HasAnthropicSecret:
     Fn::Not:
     - Fn::Equals:
-      - Ref: AnthropicSecretName
+      - Ref: AnthropicSecretArn
+      - ''
+  HasAlarmEmail:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AlarmEmail
       - ''
 Globals:
   Function:
@@ -283,7 +289,7 @@ Resources:
   ReportQueue:
     Type: AWS::SQS::Queue
     Properties:
-      VisibilityTimeout: 300
+      VisibilityTimeout: 720
       SqsManagedSseEnabled: true
       MessageRetentionPeriod: 345600
       RedrivePolicy:
@@ -292,6 +298,11 @@ Resources:
           - ReportQueueDLQ
           - Arn
         maxReceiveCount: 5
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Report handler can wait for external AI; queue visibility covers six full handler timeouts.
+        must:
+        - VisibilityTimeout >= 6 * ReportAggregator.Timeout; partial failures remain retryable.
   DispatchDLQ:
     Type: AWS::SQS::Queue
     Properties:
@@ -733,6 +744,11 @@ Resources:
       RetentionInDays: 7
   NotificationFunctionErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Async notification failures do not reach the report queue.
+        must:
+        - Send operations alerts to AlarmTopic, not a tenant report topic.
     Properties:
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -746,6 +762,12 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-NotificationFunctionErrorsAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   CSVQueueDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -763,6 +785,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-CSVQueueDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   APIQueueDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -780,6 +808,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-APIQueueDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   WebQueueDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -797,6 +831,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-WebQueueDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   TransformQueueDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -814,6 +854,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-TransformQueueDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   ReportQueueDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -831,6 +877,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-ReportQueueDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   DispatchDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -848,6 +900,12 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-DispatchDLQAlarm
+      AlarmActions:
+      - Ref: AlarmTopic
+      OKActions:
+      - Ref: AlarmTopic
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
@@ -971,12 +1029,8 @@ Resources:
           OBSERVATIONS_TABLE: *id002
           REPORTS_BUCKET:
             Ref: ReportsBucket
-          ANTHROPIC_API_KEY:
-            Ref: AnthropicApiKey
-          ANTHROPIC_SECRET_NAME:
-            Ref: AnthropicSecretName
-          SNS_TOPIC_ARN:
-            Ref: NotificationTopic
+          ANTHROPIC_SECRET_ARN:
+            Ref: AnthropicSecretArn
           NOTIFICATION_FUNCTION_NAME:
             Ref: NotificationFunction
       Events:
@@ -996,6 +1050,12 @@ Resources:
         Fn::GetAtt:
         - ReportAggregatorExecutionRole
         - Arn
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Saves a report before invoking the notification function asynchronously.
+        must:
+        - Resolve credentials at runtime; never put API keys in template parameters or logs.
+        - Invoke only this stack's NotificationFunction; delivery credentials belong to that function.
   ReportAggregatorExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1037,11 +1097,6 @@ Resources:
               - Arn
           - Effect: Allow
             Action:
-            - sns:Publish
-            Resource:
-              Ref: NotificationTopic
-          - Effect: Allow
-            Action:
             - lambda:InvokeFunction
             Resource:
               Fn::GetAtt:
@@ -1057,6 +1112,11 @@ Resources:
   ReportAggregatorSecretPolicy:
     Type: AWS::IAM::RolePolicy
     Condition: HasAnthropicSecret
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Read only the Claude secret selected by the deployment parameter.
+        must:
+        - Use the complete ARN of a secret in this account and Region.
     Properties:
       RoleName:
         Ref: ReportAggregatorExecutionRole
@@ -1068,21 +1128,25 @@ Resources:
           Action:
           - secretsmanager:GetSecretValue
           Resource:
-            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AnthropicSecretName}-??????
+            Ref: AnthropicSecretArn
+          Condition:
+            StringEquals:
+              aws:ResourceAccount:
+                Ref: AWS::AccountId
   ReportAggregatorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName:
         Fn::Sub: /aws/lambda/${ReportAggregator}
       RetentionInDays: 7
-  NotificationTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName:
-        Fn::Sub: ${AWS::StackName}-alerts
-      DisplayName: MarketData Tenant Alerts
   NotificationFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Sends tenant reports independently of report generation and retries failed channels.
+        must:
+        - Validate destination account, Region and tenant namespace before sending.
+        - Keep report destinations separate from operations alarms.
     Properties:
       CodeUri: ../../build/lambda/
       Handler: services.reporting.notification.handler
@@ -1091,8 +1155,10 @@ Resources:
         Variables:
           CONTROL_TABLE: *id001
           OBSERVATIONS_TABLE: *id002
-          SNS_TOPIC_ARN:
-            Ref: NotificationTopic
+          NOTIFICATION_STACK_NAME:
+            Ref: AWS::StackName
+          AWS_ACCOUNT_ID:
+            Ref: AWS::AccountId
       Policies:
       - Statement:
         - *id003
@@ -1100,7 +1166,24 @@ Resources:
           Action:
           - sns:Publish
           Resource:
-            Ref: NotificationTopic
+            Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-tenant-*
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/tenants/*/slack-*
+        - Effect: Allow
+          Action:
+          - kms:GenerateDataKey
+          - kms:Decrypt
+          Resource:
+            Fn::GetAtt:
+            - NotificationKey
+            - Arn
+          Condition:
+            StringEquals:
+              kms:ViaService:
+                Fn::Sub: sns.${AWS::Region}.${AWS::URLSuffix}
   NotificationFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -1420,23 +1503,25 @@ Resources:
           CloudFrontDefaultCertificate: true
   WebBucketPolicy:
     Type: AWS::S3::BucketPolicy
-    Condition: UseCloudFront
     Properties:
       Bucket:
         Ref: WebBucket
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-        - Effect: Allow
-          Principal:
-            Service: cloudfront.amazonaws.com
-          Action: s3:GetObject
-          Resource:
-            Fn::Sub: ${WebBucket.Arn}/*
-          Condition:
-            StringEquals:
-              AWS:SourceArn:
-                Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}
+        - Fn::If:
+          - UseCloudFront
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource:
+              Fn::Sub: ${WebBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}
+          - Ref: AWS::NoValue
         - Effect: Deny
           Principal: '*'
           Action: s3:*
@@ -1448,6 +1533,11 @@ Resources:
           Condition:
             Bool:
               aws:SecureTransport: 'false'
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: TLS deny applies even in the CloudFront-disabled dev deployment.
+        must:
+        - Only the CloudFront read grant references the conditional distribution.
   RawBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -1489,8 +1579,7 @@ Resources:
   ApiDataPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to Hieu API role after JWT, membership and RBAC checks are
-        implemented.
+      Description: Attach to Hieu API role after JWT, membership and RBAC checks are implemented.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -1518,6 +1607,18 @@ Resources:
           - s3:GetObject
           Resource:
             Fn::Sub: ${ReportsBucket.Arn}/tenants/*
+        - Effect: Allow
+          Action:
+          - dynamodb:ConditionCheckItem
+          Resource:
+            Fn::GetAtt:
+            - ControlTable
+            - Arn
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: API transactions may condition-check the active tenant before updating membership.
+        must:
+        - Identity, role and tenant checks remain in the API; IAM table scope is not row isolation.
   NormalizerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1698,6 +1799,94 @@ Resources:
             - logs:PutLogEvents
             Resource:
               Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+  NotificationKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: CloudWatch needs a customer-managed key to publish encrypted SNS alerts; tenant topics reuse
+          it.
+        must:
+        - Keep this key while any alarm/tenant topic uses it; retention also retains KMS charges.
+    Properties:
+      Description:
+        Fn::Sub: ${AWS::StackName} alarm and tenant notification encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: EnableAccountIAM
+          Effect: Allow
+          Principal:
+            AWS:
+              Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+          Action: kms:*
+          Resource: '*'
+        - Sid: AllowStackCloudWatchAlarms
+          Effect: Allow
+          Principal:
+            Service: cloudwatch.amazonaws.com
+          Action:
+          - kms:GenerateDataKey
+          - kms:Decrypt
+          Resource: '*'
+          Condition: &id004
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+            ArnLike:
+              aws:SourceArn:
+                Fn::Sub: arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Operations alerts only; never contains tenant report digests.
+        must:
+        - Keep separate from per-tenant report topics.
+    Properties:
+      KmsMasterKeyId:
+        Fn::GetAtt:
+        - NotificationKey
+        - Arn
+      SignatureVersion: '2'
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+      - Ref: AlarmTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowStackCloudWatchAlarms
+          Effect: Allow
+          Principal:
+            Service: cloudwatch.amazonaws.com
+          Action: sns:Publish
+          Resource:
+            Ref: AlarmTopic
+          Condition: *id004
+        - Sid: RequireTLSForPublishAndSubscribe
+          Effect: Deny
+          Principal: '*'
+          Action:
+          - sns:Publish
+          - sns:Subscribe
+          Resource:
+            Ref: AlarmTopic
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn:
+        Ref: AlarmTopic
+      Protocol: email
+      Endpoint:
+        Ref: AlarmEmail
 Outputs:
   ControlTable:
     Value:
@@ -1822,6 +2011,25 @@ Outputs:
   ApiDataPolicyArn:
     Value:
       Ref: ApiDataPolicy
-  NotificationTopicArn:
+  AlarmTopicArn:
+    Description: Operations alarm topic; not a tenant report destination.
     Value:
-      Ref: NotificationTopic
+      Ref: AlarmTopic
+  NotificationKeyArn:
+    Description: Pass to each tenant notification stack in this account and Region.
+    Value:
+      Fn::GetAtt:
+      - NotificationKey
+      - Arn
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+    - Keep tenant data private; application checks enforce tenant isolation.
+    - Keep schedules disabled until live tests and report quotas pass.
+    - Do not replace or remove retained data resources during integration.
+    ref:
+    - at: README.md
+      has: deployment, IAM, secret and retained-resource constraints
+      scope: infra/aws

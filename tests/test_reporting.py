@@ -4,6 +4,7 @@ import json
 from decimal import Decimal
 
 import boto3
+import pytest
 
 from marketdata.contracts import iso
 from services.api.app import handler
@@ -61,7 +62,11 @@ def test_claude_client_sends_current_model_and_falls_back_on_empty_text(monkeypa
     assert result["status"] == "fallback_quantitative"
 
 
-def test_claude_client_graceful_fallback():
+def test_claude_client_graceful_fallback(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("simulated_timeout")
+
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", unavailable)
     client = ClaudeClient(api_key="bad-key", mock_mode=False)
     # Simulate failed API call
     summary_data = {
@@ -72,7 +77,7 @@ def test_claude_client_graceful_fallback():
     result = client.generate_report_summary(summary_data)
     assert result["status"] == "fallback_quantitative"
     assert "Số Liệu" in result["text"]
-    assert "Dữ liệu số đã được tổng hợp thành công" or "Claude API" in result["text"]
+    assert "Claude API" in result["text"]
 
 
 def test_aggregator_worker_full_pipeline(store, monkeypatch):
@@ -183,7 +188,6 @@ def test_report_lock_atomic_conditional_write(store):
 def test_secrets_manager_api_key_retrieval(monkeypatch):
     from services.reporting.claude_client import get_anthropic_api_key
 
-    # Mock Secrets Manager client
     class FakeSecretsClient:
         def __init__(self, secrets):
             self._secrets = secrets
@@ -193,27 +197,18 @@ def test_secrets_manager_api_key_retrieval(monkeypatch):
                 return {"SecretString": self._secrets[SecretId]}
             raise RuntimeError(f"Secret {SecretId} not found")
 
-    client = FakeSecretsClient({
-        "app/anthropic_plain": "sk-ant-plain-secret-value",
-        "app/anthropic_json": json.dumps({"ANTHROPIC_API_KEY": "sk-ant-json-secret-value"}),
-    })
-
-    # 1. Plain text secret from Secrets Manager
-    key_plain = get_anthropic_api_key(secret_name="app/anthropic_plain", secrets_client=client)
-    assert key_plain == "sk-ant-plain-secret-value"
-
-    # 2. JSON-encoded secret from Secrets Manager
+    monkeypatch.delenv("ANTHROPIC_SECRET_ARN", raising=False)
+    client = FakeSecretsClient({"app/anthropic_json": json.dumps({"api_key": "test-json-key"})})
     key_json = get_anthropic_api_key(secret_name="app/anthropic_json", secrets_client=client)
-    assert key_json == "sk-ant-json-secret-value"
+    assert key_json == "test-json-key"
 
-    # 3. Explicit api_key overrides Secrets Manager
-    key_override = get_anthropic_api_key(api_key="explicit-key", secret_name="app/anthropic_plain", secrets_client=client)
+    key_override = get_anthropic_api_key(api_key="explicit-key", secret_name="app/non_existent", secrets_client=client)
     assert key_override == "explicit-key"
 
-    # 4. Fallback to env var if Secrets Manager fails
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-fallback")
-    key_fallback = get_anthropic_api_key(secret_name="app/non_existent", secrets_client=client)
-    assert key_fallback == "sk-env-fallback"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-env-key")
+    assert get_anthropic_api_key() == "test-env-key"
+    with pytest.raises(RuntimeError):
+        get_anthropic_api_key(secret_name="app/non_existent", secrets_client=client)
 
 
 def test_aggregator_reuses_cached_report_without_calling_ai(store, monkeypatch):
@@ -331,3 +326,23 @@ def test_retry_with_stored_report_still_notifies(store, monkeypatch):
     assert RecordingLambda.calls == [
         {"tenant_id": "tenant-a", "report_id": report_id, "period": period, "summary": "Stored"}
     ]
+
+
+def test_failed_notification_handoff_reuses_stored_report_on_retry(store, monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("NOTIFICATION_FUNCTION_NAME", "notify-fn")
+    monkeypatch.delenv("REPORTS_BUCKET", raising=False)
+    ai = MagicMock()
+    ai.generate_report_summary.return_value = {"status": "ai_generated", "text": "Stored summary"}
+    lam = MagicMock()
+    lam.invoke.side_effect = [RuntimeError("throttled"), {}]
+    body = {"tenant_id": "tenant-a", "job_id": "report-retry", "scheduled_at": iso(NOW)}
+
+    with pytest.raises(RuntimeError, match="throttled"):
+        process_report_job(body, store, claude_client=ai, lambda_client=lam)
+    result = process_report_job(body, store, claude_client=ai, lambda_client=lam)
+
+    assert result["reused"] is True and result["notification"]["status"] == "queued"
+    assert ai.generate_report_summary.call_count == 1
+    assert lam.invoke.call_count == 2

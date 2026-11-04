@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Group 07: one private Slack credential and encrypted report topic per tenant.'
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+    - Deploy in the same account and Region as the main pipeline.
+    - Keep report destinations separate between tenants and from operations alarms.
+    ref:
+    - at: README.md
+      has: notification resource names and onboarding steps
+      scope: infra/aws
+Parameters:
+  MainStackName:
+    Type: String
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9-]{0,127}$'
+    Description: Main pipeline stack name; matches its IAM and runtime namespace checks.
+  TenantId:
+    Type: String
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+    Description: Exact tenant_id in ControlTable; use SNS-compatible letters, digits, underscore or hyphen.
+  NotificationKeyArn:
+    Type: String
+    AllowedPattern: '^arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$'
+    Description: NotificationKeyArn output of the main stack in this account and Region.
+  Email:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    Description: Optional tenant report recipient; email confirmation is required.
+Conditions:
+  HasEmail:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: Email
+      - ''
+Resources:
+  ReportTopic:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: one topic per tenant so email subscriptions do not receive other tenants' reports
+        must:
+        - TopicName must match the main worker IAM namespace and the tenant_id in metadata.
+    Properties:
+      TopicName:
+        Fn::Sub: '${MainStackName}-tenant-${TenantId}'
+      KmsMasterKeyId:
+        Ref: NotificationKeyArn
+      SignatureVersion: '2'
+      Tags:
+      - Key: tenant_id
+        Value:
+          Ref: TenantId
+  ReportTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+      - Ref: ReportTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: RequireTLSForPublishAndSubscribe
+          Effect: Deny
+          Principal: '*'
+          Action:
+          - sns:Publish
+          - sns:Subscribe
+          Resource:
+            Ref: ReportTopic
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn:
+        Ref: ReportTopic
+      Protocol: email
+      Endpoint:
+        Ref: Email
+  SlackSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Slack webhook is entered in Secrets Manager after deployment instead of a template parameter
+        must:
+        - Store JSON with webhook_url; never put the webhook in outputs or tenant metadata.
+        - Changing its name creates a replacement; retained secrets require deliberate cleanup.
+    Properties:
+      Name:
+        Fn::Sub: '${MainStackName}/tenants/${TenantId}/slack'
+      Description: Tenant Slack incoming webhook, configured after deployment.
+      Tags:
+      - Key: tenant_id
+        Value:
+          Ref: TenantId
+Outputs:
+  TenantId:
+    Description: Bind these destinations only to this tenant.
+    Value:
+      Ref: TenantId
+  ReportTopicArn:
+    Description: Store as sns_topic_arn in this tenant's META record.
+    Value:
+      Ref: ReportTopic
+  SlackSecretArn:
+    Description: Store as slack_secret_arn only after entering the webhook_url secret value.
+    Value:
+      Ref: SlackSecret
