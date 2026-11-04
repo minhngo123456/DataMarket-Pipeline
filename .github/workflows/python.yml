@@ -1,7 +1,7 @@
 name: Python checks
 on:
   push:
-    paths: ['marketdata/**', 'services/**', 'tests/**', 'infra/**', '*.txt', 'pyproject.toml', '.github/workflows/python.yml']
+    paths: ['marketdata/**', 'services/**', 'scripts/**', 'tests/**', 'infra/**', '*.txt', 'pyproject.toml', '.github/workflows/python.yml']
   pull_request:
 jobs:
   check:
@@ -18,5 +18,6 @@ jobs:
       - run: ruff check .
       - run: pytest -q
       - run: cfn-lint infra/aws/template.yaml
+      - run: cfn-lint infra/aws/tenant-notifications.yaml
       - run: python -m scripts.validate_template
       - run: cfn-lint build/cloudformation.json
