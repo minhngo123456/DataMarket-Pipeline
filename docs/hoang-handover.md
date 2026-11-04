@@ -1,5 +1,7 @@
 # Phần việc của Vũ Minh Hoàng
 
+Trạng thái và bằng chứng cập nhật ngày 01/11/2026 nằm trong [bàn giao tổng kết của Hoàng](hoang-final-handover.md). Nội dung bên dưới là bản bàn giao ban đầu; các số kiểm thử và thông tin chưa triển khai chỉ phản ánh thời điểm 19/10/2026.
+
 Code dùng Python 3.12, boto3 và AWS SAM. Mục tiêu là một luồng dễ chạy, dễ giải thích trong đồ án. Đã kiểm tra local đạt chuẩn và đẩy lên nhánh tính năng để mở Pull Request; chưa triển khai AWS thật.
 
 ## Đã có

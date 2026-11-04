@@ -1,53 +1,80 @@
 # Hạ tầng AWS của Hoàng
 
-[Hướng dẫn từng bước trên tài khoản cá nhân Free plan](../../docs/aws-deploy-free-plan.md).
+`template.yaml` mô tả backend Python 3.12 bằng AWS SAM. Stack `marketdata-hoang-dev` đã cập nhật thành công ngày 01/11/2026 với CloudFront và lịch tự động tắt. Kiểm kê 56 mục, CSV/replay, 15 kiểm tra quyền API và DLQ trên AWS đã đạt; alarm tự chuyển ALARM và gọi SNS thành công. Chi tiết và giới hạn trong [bàn giao của Hoàng](../../docs/hoang-final-handover.md). AWS Support chưa chấp thuận quyền tạo CloudFront cho tài khoản này.
 
-Template: `template.yaml`, Python 3.12, AWS SAM. Hạ tầng được mô tả bằng code, chưa deploy vào tài khoản AWS.
 
-## Có trong template
+Bản hợp nhất ngày 04/11/2026 thêm NotificationFunction riêng, retry từng kênh, report lock và ID quan sát theo nội dung từ `origin/main`. Các kết quả AWS ngày 01/11 dưới đây thuộc phiên bản đã triển khai lúc đó; bản hợp nhất cần được kiểm thử và triển khai riêng.
 
-- DynamoDB ControlTable và ObservationsTable, GSI `by_day`, TTL, mã hóa và point-in-time recovery.
-- S3 Raw/Reports/Web riêng tư, versioning, mã hóa, chặn HTTP. Raw gửi Object Created qua EventBridge vào CSVQueue; CloudFront dùng OAC đọc WebBucket.
-- CSVQueue, APIQueue, WebQueue, TransformQueue, ReportQueue, mỗi queue có DLQ riêng. Visibility timeout 300 giây, maxReceiveCount 5. CloudWatch có cảnh báo khi DLQ có message.
-- CSVWorker, APIWorker, WebWorker và Normalizer: timeout 45 giây, partial batch response, IAM giới hạn theo tài nguyên/chức năng. Các extractor dùng batch 1; Normalizer dùng batch 10. Source mapping giới hạn concurrency 2.
-- Job Dispatcher mỗi 6 giờ và Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. Scheduler có retry và DLQ; lịch mặc định DISABLED.
-- Cognito user pool/client, HTTP API và JWT authorizer. `ApiFunction` (`services.api.app.handler`) đã được gắn vào 21 route của `docs/api-contract-frontend.md`, mọi route đều qua JWT authorizer; frontend đặt `VITE_API_URL` bằng output `HttpApiEndpoint` (stage `$default`, không có `/v1`). Cognito hiện chỉ cho admin tạo user.
-- CloudFront/S3 Web để Minh tải giao diện. S3 CORS và API CORS cho phép WebOrigin và LocalDevOrigin (cùng mặc định http://localhost:5173). Đặt LocalDevOrigin bằng WebOrigin để chỉ cho phép một origin.
+## Thành phần và giới hạn
 
-`ApiDataPolicyArn` là policy dữ liệu bàn giao cho Hiếu. Hạ tầng dùng chung nhiều tenant; policy giới hạn tài nguyên nhưng không tự cách ly dữ liệu theo người đăng nhập. Handler API phải kiểm tra JWT/membership/RBAC, worker đối chiếu source/job.
+- DynamoDB ControlTable/ObservationsTable có GSI `by_day`, TTL, mã hóa và point-in-time recovery.
+- Raw/Reports/Web là các bucket riêng tư, mã hóa, có versioning và policy từ chối HTTP. Raw phát Object Created qua EventBridge tới CSVQueue.
+- CSVQueue, APIQueue, WebQueue, TransformQueue và ReportQueue có DLQ riêng; Scheduler có DispatchDLQ. Sáu alarm DLQ và một alarm lỗi NotificationFunction gửi ALARM/OK tới AlarmTopic. `AlarmEmail` tạo subscription email vận hành, cần xác nhận trước khi thử cảnh báo.
+- CSV/API/Web worker và Normalizer: timeout 45 giây, visibility 300 giây. ReportAggregator: timeout 120 giây, ReportQueue visibility 720 giây. Event source mapping dùng partial batch response và concurrency tối đa 2 trên mỗi mapping, dùng chung giữa các tenant.
+- Job Dispatcher mỗi 6 giờ; Report Dispatcher lúc 08:00 Asia/Ho_Chi_Minh. `ScheduleState=DISABLED` mặc định; chỉ bật lịch sau khi kiểm thử nguồn, hạn mức báo cáo và retry.
+- Cognito cấp token; 21 route HTTP API dùng JWT authorizer. ApiFunction kiểm tra membership/RBAC và hạn mức. IAM giới hạn tài nguyên, không thay thế kiểm tra tenant ở handler.
+- ReportAggregator tiêu thụ ReportQueue, lưu báo cáo rồi gọi bất đồng bộ NotificationFunction. Hàm thông báo theo dõi kết quả riêng từng kênh và thử lại kênh chưa gửi thành công.
 
-## Chuẩn bị và kiểm tra local
+## CloudFront và địa chỉ giao diện
+
+`EnableCloudFront=DISABLED` không tạo WebOAC/WebDistribution; output WebUrl cũng không xuất hiện. WebBucket vẫn riêng tư và từ chối HTTP. Chỉ quyền đọc CloudFront trong WebBucketPolicy phụ thuộc `UseCloudFront`.
+
+`WebOrigin` là origin của giao diện; `LocalDevOrigin` cho phép kiểm thử local. Cả hai mặc định là `http://localhost:5173`. API và S3 PUT CORS dùng cùng danh sách; đặt hai tham số bằng nhau nếu chỉ cần một origin. Các thư viện Amplify/Cognito ở trình duyệt không bắt buộc dùng Amplify Hosting.
+
+## Khóa Claude và kênh báo cáo theo tenant
+
+Không truyền API key qua tham số CloudFormation. Tạo secret trong Secrets Manager cùng tài khoản/Region, lưu JSON có trường `api_key`, rồi truyền ARN vào `AnthropicSecretArn`. Khi để trống, runtime không gọi Claude thật. Template mặc định dành cho secret dùng khóa quản lý bởi Secrets Manager; nếu dùng KMS key riêng, cần bổ sung quyền decrypt trên key đó.
+
+`tenant-notifications.yaml` tạo một topic và một Slack secret cho đúng một tenant. Tạo stack riêng cho từng tenant:
+
+| Tham số | Giá trị |
+| --- | --- |
+| MainStackName | Tên stack backend, khớp namespace IAM/runtime |
+| TenantId | `tenant_id` trong ControlTable; chữ, số, `_` hoặc `-` để SNS chấp nhận tên |
+| NotificationKeyArn | Output cùng tên từ stack backend, cùng account/Region |
+| Email | Email nhận báo cáo, có thể trống; phải xác nhận SNS subscription |
+
+Lưu output `ReportTopicArn` vào `sns_topic_arn` trong META của đúng tenant. Topic có tên `${MainStackName}-tenant-${TenantId}`. `SlackSecretArn` trỏ tới `${MainStackName}/tenants/${TenantId}/slack`; secret ban đầu không có giá trị. Nhập JSON có trường `webhook_url` trong Secrets Manager trước khi gắn ARN vào `slack_secret_arn` của tenant. Không lưu webhook trực tiếp trong META hoặc log.
+
+Template tenant không dùng Export/ImportValue. Bước bootstrap nhận outputs qua tham số. Không tự đổi MainStackName/TenantId của stack đã cấu hình: thay tên có thể tạo tài nguyên mới và để lại secret Retain. NotificationFunction chỉ có SNS Publish trong prefix của stack và GetSecretValue trong namespace Slack của stack. Aggregator chỉ đọc đúng ARN secret Claude và gọi đúng NotificationFunction. Runtime còn kiểm tra account/Region và tenant của đích gửi; không dùng kênh SNS/Slack dự phòng chung.
+
+## Mã hóa và tài nguyên giữ lại
+
+NotificationKey là customer-managed KMS key cho AlarmTopic và topic tenant. CloudWatch được cấp GenerateDataKey/Decrypt với SourceAccount và ARN alarm thuộc stack; role NotificationFunction được cấp quyền trên đúng key qua SNS. Topic policy từ chối HTTP. Tên các alarm dùng prefix stack để SourceArn không tạo vòng tham chiếu key/topic/alarm.
+
+NotificationKey có Retain để stack tenant còn dùng nó không mất khóa khi stack chính bị xóa. KMS key, Secrets Manager, PITR, CloudWatch và tài nguyên giữ lại có thể tiếp tục phát sinh chi phí. Sau demo, kiểm kê stack tenant và tài nguyên Retain trước khi dọn; chỉ lên lịch xóa key khi chắc chắn không còn topic/dữ liệu cần nó. Không tự động xóa bucket, bảng hoặc secret của lần triển khai cũ.
+
+Policy SNS liệt kê `sns:Publish` và `sns:Subscribe` để bắt buộc HTTPS. Không dùng `sns:*` trong topic policy: lần triển khai ngày 01/11/2026 bị SNS từ chối với lỗi `Policy statement action out of service scope`. cfn-lint không phát hiện lỗi này; dự án đã thêm kiểm thử hồi quy cho cả hai template. Các action hợp lệ được đối chiếu với [tài liệu SNS](https://docs.aws.amazon.com/sns/latest/dg/sns-access-policy-language-api-permissions-reference.html).
+
+## Kiểm tra local
 
 Từ thư mục gốc:
 
 ```powershell
 .venv\Scripts\python.exe -m scripts.stage_lambda
-.venv\Scripts\cfn-lint.exe infra/aws/template.yaml
+.venv\Scripts\cfn-lint.exe infra/aws/template.yaml infra/aws/tenant-notifications.yaml
 .venv\Scripts\python.exe -m scripts.validate_template
 .venv\Scripts\cfn-lint.exe build/cloudformation.json
+.venv\Scripts\python.exe -m pytest tests/test_infra.py tests/test_sam.py -q
 ```
 
-`validate_template` dịch SAM offline bằng policy map cố định, không gọi IAM/AWS; kết quả build/cloudformation.json được lint riêng.
+`validate_template` dịch SAM offline, không gọi IAM/AWS. `stage_lambda` chỉ đóng gói marketdata, services và requirements; không đóng gói `.venv`, `.git`, fixture hay cấu hình cá nhân. Chạy lại sau khi sửa code.
 
-`stage_lambda` chỉ sao chép marketdata, services và requirements vào build/lambda. Không đóng gói .venv, .git, fixture hoặc file cấu hình cá nhân. Chạy lại sau khi sửa code. Thư mục build bị gitignore.
+Template chính vượt giới hạn 51.200 byte của TemplateBody truyền trực tiếp. Dùng `sam build`/`sam deploy` để đóng gói và tải template qua S3; không truyền nguyên template này vào `aws cloudformation ... --template-body`. Giới hạn template qua S3 là 1 MiB. Dịch SAM offline không chứng minh quyền hoặc điều kiện tài khoản AWS.
 
-## Khi nhóm có tài khoản sandbox
+## Triển khai và kiểm chứng thật
 
-Các lệnh dưới đây dành cho người phụ trách triển khai; chưa được thực hiện trong bản local này. Cần AWS CLI, SAM CLI, Python 3.12 và quyền tạo tài nguyên/IAM trong Region của nhóm.
+Xem [hướng dẫn tài khoản Free plan](../../docs/aws-deploy-free-plan.md). Cần AWS CLI, SAM CLI, Python 3.12 và quyền IAM/KMS/SNS/Secrets Manager tương ứng. Giữ `EnableCloudFront=DISABLED`, `ScheduleState=DISABLED` khi tích hợp. Tham số tùy chọn mới là `AlarmEmail`, `AnthropicSecretArn`; không còn `AnthropicApiKey`.
 
-```powershell
-python -m scripts.stage_lambda
-sam build --template-file infra/aws/template.yaml
-sam deploy --guided
-```
+Trước deploy, kiểm kê stack rollback và bucket/bảng Retain. Xem change set để biết tài nguyên tạo/thay/xóa. Giữ tên bucket/bảng dữ liệu; không tự động dọn tài nguyên của lần trước.
 
-Chọn stack riêng cho môi trường dev, Region được nhóm chốt, capability CAPABILITY_IAM, WebOrigin đúng địa chỉ web, ScheduleState=DISABLED, EnableCloudFront=DISABLED (mặc định tắt chờ duyệt tài khoản). Chỉ bật lịch sau khi Hướng nối API/HTML consumer và Hiếu nối Aggregator. Dùng outputs để bàn giao tên bucket/table, URL/ARN queue, Cognito, authorizer và các hàm; không chép credentials vào repo.
+Sau deploy cần ghi stack status/outputs; thử CSV 100 dòng, retry, hai tenant; thử API/web với nguồn thật; xác nhận email SNS; kiểm tra DLQ, alarm và log. Kiểm thử cách ly gồm job/source/product của tenant khác, thành viên bị vô hiệu hóa, Viewer ghi dữ liệu và URL báo cáo. GSI có thể trễ; TTL xóa nền nên code vẫn lọc thời gian. Chưa có đo tải, chi phí hoặc độ trễ AWS cho bản sửa này.
 
-Thử luồng CSV: API của Hiếu tạo source và job phía máy chủ, cấp presigned PUT URL cho đúng `tenants/<tenant>/raw/<job>`, trình duyệt tải UTF-8 CSV. Kiểm tra EventBridge, CSVQueue, TransformQueue, receipt/job counts và tenant isolation. Nếu chưa có API, admin có thể seed source/job bằng AWS CLI trong sandbox; không mở route tạm bỏ qua xác thực.
+cfn-lint và regression test bảo mật được cấu hình trong dự án. cfn-guard chưa được cài theo lựa chọn của người phụ trách; chưa có kết quả compliance bằng Guard. CloudFormation đã tạo change set và không báo lỗi pre-deployment validation ở lần cập nhật thứ hai; kết quả triển khai và kiểm thử runtime được ghi riêng trong tài liệu bàn giao.
 
-ReportAggregator đã đọc ReportQueue và gọi Notification trong cùng Lambda; API dùng USER_POOL_ID để tạo user Cognito khi mời thành viên. Còn thiếu SNS topic/subscription, Secrets Manager references theo tenant. APIWorker và WebWorker hiện đã được khai báo làm consumer của APIQueue/WebQueue. Cảnh báo DLQ chưa có AlarmActions; nhóm cần cấu hình kênh nhận thông báo khi triển khai.
+## Hosting của môi trường nhóm
 
-Bucket và table có DeletionPolicy Retain để tránh mất dữ liệu khi xóa stack. Khi dọn sandbox, cần kiểm tra rồi xóa riêng tài nguyên còn giữ. CloudWatch/PITR/S3 có thể phát sinh chi phí sau khi triển khai; bản local không tạo tài nguyên AWS.
+Các lệnh trong phần này dùng stack `marketdata-dev` tại `ap-southeast-1`, theo tài liệu của nhóm. Môi trường Hoàng đã kiểm thử là `marketdata-hoang-dev` tại `us-east-1`; cần thay đúng stack, Region và app ID nếu triển khai môi trường khác.
 
 ## Đưa web lên Amplify Hosting
 
@@ -94,10 +121,4 @@ aws cloudfront create-invalidation --distribution-id <WebDistributionId> --paths
 
 CloudFront trả `index.html` với mã 200 cho mọi lỗi 403/404, nên đường dẫn file không tồn tại cũng ra trang web chứ không báo lỗi.
 
-## Kiểm tra sau deploy
-
-- Hai tenant: thử job/source/product của tenant khác, membership bị vô hiệu hóa, Viewer gọi thao tác ghi và URL S3/report.
-- Retry cùng file không tăng số quan sát; file bị PUT lại với phiên bản khác không được tráo vào job đã gắn phiên bản.
-- Thử lỗi từng dòng và lỗi hạ tầng; kiểm tra partial batch response, DLQ, log không lộ raw record/secret.
-- Thử lịch với scheduled_at cố định, nguồn bị tắt, múi giờ báo cáo và quyền từng Lambda role.
-- Kiểm tra GSI trễ, retention, quota và thời gian chạy thực tế. Moto/cfn-lint chưa chứng minh các điểm này trên AWS thật.
+Tham khảo: [SQS/Lambda](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-configure.html), [SNS và KMS](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html), [DynamoDB transaction IAM](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html), [CloudFormation limits](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cloudformation-limits.html).
