@@ -21,6 +21,22 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 
+def no_data_result(period: str, stale_sources: list[str]) -> dict:
+    """Report text for a window without valid prices, written without calling a model."""
+    stale = ", ".join(stale_sources) if stale_sources else "Chưa có nguồn nào"
+    return {
+        "text": (
+            f"### Báo cáo Thị trường ({period})\n\n"
+            "Không có quan sát giá hợp lệ trong 24 giờ qua, nên báo cáo này không dùng AI.\n\n"
+            f"- Nguồn thiếu hoặc quá hạn: {stale}\n"
+            "- Việc cần làm: tải dữ liệu mới hoặc kiểm tra cấu hình nguồn."
+        ),
+        "status": "skipped_no_data",
+        "provider": "none",
+        "model": "none",
+    }
+
+
 def process_report_job(
     message_body: dict,
     store: DynamoStore,
@@ -103,8 +119,12 @@ def process_report_job(
     # Record daily lock if not already recorded (e.g. if invoked by scheduled dispatcher)
     store.acquire_report_lock(tenant_id, period, job_id=job_id, triggered_by="aggregator")
 
-    ai_client = claude_client or build_report_client()
-    ai_result = ai_client.generate_report_summary(summary_data)
+    # With nothing to analyse, a model call only spends quota: every tenant reports daily.
+    if rows:
+        ai_client = claude_client or build_report_client()
+        ai_result = ai_client.generate_report_summary(summary_data)
+    else:
+        ai_result = no_data_result(period, stale_sources)
 
     # 4. Save full report artifact into S3
     bucket = reports_bucket or os.environ.get("REPORTS_BUCKET")
