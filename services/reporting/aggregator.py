@@ -1,9 +1,4 @@
-"""Aggregator Worker consuming ReportQueue.
-
-Extracts the 24-hour price matrix, computes statistical metrics and anomalies,
-invokes the Claude API for executive narrative, stores report artifacts in DynamoDB and S3,
-and triggers tenant notifications.
-"""
+"""Build a daily report from ReportQueue jobs and queue its notification."""
 
 import json
 import logging
@@ -13,6 +8,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from marketdata.contracts import iso, stable_id, timestamp
@@ -106,8 +102,7 @@ def process_report_job(
     # Record daily lock if not already recorded (e.g. if invoked by scheduled dispatcher)
     store.acquire_report_lock(tenant_id, period, job_id=job_id, triggered_by="aggregator")
 
-    # 3. Call Claude API (reads key from AWS Secrets Manager or env var fallback)
-    ai_client = claude_client or ClaudeClient(secret_name=os.environ.get("ANTHROPIC_SECRET_NAME"))
+    ai_client = claude_client or ClaudeClient()
     ai_result = ai_client.generate_report_summary(summary_data)
 
     # 4. Save full report artifact into S3
@@ -186,20 +181,21 @@ def complete_job(store: DynamoStore, tenant_id: str, job_id: str, report_id: str
 def trigger_notification(
     tenant_id: str, report_id: str, period: str, summary: str, store: DynamoStore, lambda_client=None
 ) -> dict:
-    """Hand the stored report to the Notification Lambda, or notify in-process when none is set."""
+    """Queue the stored report; failed handoffs must retry through ReportQueue."""
     function_name = os.environ.get("NOTIFICATION_FUNCTION_NAME")
     if function_name:
         payload = {"tenant_id": tenant_id, "report_id": report_id, "period": period, "summary": summary[:20000]}
-        try:
-            client = lambda_client or boto3.client("lambda")
-            client.invoke(
-                FunctionName=function_name,
-                InvocationType="Event",
-                Payload=json.dumps(payload).encode("utf-8"),
-            )
-            return {"status": "queued", "function": function_name}
-        except Exception as exc:
-            logger.warning("Notification Lambda invoke failed for %s/%s: %s", tenant_id, report_id, exc)
+        client = lambda_client or boto3.client("lambda", config=Config(
+            connect_timeout=3, read_timeout=5,
+            retries={"mode": "standard", "total_max_attempts": 2},
+        ))
+        client.invoke(
+            FunctionName=function_name,
+            InvocationType="Event",
+            Payload=json.dumps(payload).encode("utf-8"),
+        )
+        return {"status": "queued", "function": function_name}
+    # Local tests can call the module without creating a Notification Lambda.
     return dispatch_notification(
         tenant_id=tenant_id, report_id=report_id, period=period, summary_text=summary, store=store
     )
@@ -219,7 +215,7 @@ def handler(event: dict, context=None, store: DynamoStore | None = None) -> dict
             body = json.loads(record.get("body", "{}"))
             process_report_job(body, store)
         except Exception as exc:
-            logger.exception("Failed processing report record %s: %s", msg_id, exc)
+            logger.error("report_failed message_id=%s error_type=%s", msg_id, type(exc).__name__)
             batch_failures.append({"itemIdentifier": msg_id})
 
     return {"batchItemFailures": batch_failures}

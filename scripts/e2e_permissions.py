@@ -25,7 +25,7 @@ from pycognito.aws_srp import AWSSRP
 
 from marketdata.repository import DynamoStore, pk
 from scripts.cleanup_smoke_tenants import key_of, s3_versions, scan_keys
-from scripts.smoke_test_aws import get_stack_outputs
+from scripts.verify_aws import get_stack
 
 HOME_TENANT = "group07"
 OTHER_TENANT = "e2e-tenant-b"
@@ -322,7 +322,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
-    outputs = get_stack_outputs(session.client("cloudformation"), args.stack)
+    stack, _ = get_stack(session.client("cloudformation"), args.stack)
+    outputs = {item["OutputKey"]: item["OutputValue"] for item in stack["Outputs"]}
     store = DynamoStore(
         outputs["ControlTable"],
         outputs["ObservationsTable"],

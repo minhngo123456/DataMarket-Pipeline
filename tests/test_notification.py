@@ -1,208 +1,145 @@
-"""Tests for Notification Lambda, SNS publishing, and deduplication."""
+"""Tenant destinations, channel retries and async report handoff."""
 
+import json
 from unittest.mock import MagicMock
 
-from services.reporting.notification import dispatch_notification, send_sns_notification
+import boto3
+import pytest
+from moto import mock_aws
+
+from scripts.subscribe_tenant_email import subscribe
+from services.reporting.aggregator import trigger_notification
+from services.reporting.notification import dispatch_notification, handler, send_sns_notification
+
+STACK = "marketdata-test"
+TOPIC_A = "arn:aws:sns:us-east-1:123456789012:marketdata-test-tenant-tenant-a"
+TOPIC_B = "arn:aws:sns:us-east-1:123456789012:marketdata-test-tenant-tenant-b"
+SLACK_A = "arn:aws:secretsmanager:us-east-1:123456789012:secret:marketdata-test/tenants/tenant-a/slack-abcdef"
+
+
+@pytest.fixture(autouse=True)
+def channel_namespace(monkeypatch):
+    monkeypatch.setenv("NOTIFICATION_STACK_NAME", STACK)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCOUNT_ID", "123456789012")
 
 
 def test_sns_notification_publish():
-    mock_sns = MagicMock()
-    success = send_sns_notification(
-        topic_arn="arn:aws:sns:us-east-1:123456789012:test-topic",
-        subject="Test Alert",
-        message="Test message body",
-        sns_client=mock_sns,
-    )
-    assert success is True
-    mock_sns.publish.assert_called_once()
+    sns = MagicMock()
+    assert send_sns_notification(TOPIC_A, "Report", "Summary", sns, tenant_id="tenant-a")
+    assert sns.publish.call_args.kwargs["MessageAttributes"] == {
+        "tenant_id": {"DataType": "String", "StringValue": "tenant-a"}
+    }
 
 
 def test_notification_deduplication(store):
-    mock_sns = MagicMock()
-    # Configure tenant with SNS topic
-    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": "arn:aws:sns:us-east-1:123456789012:tenant-a"})
-
-    # First dispatch
-    result1 = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-100",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-        sns_client=mock_sns,
-    )
-    assert result1["status"] == "sent"
-    assert "sns" in result1["channels"]
-    assert result1["sns_sent"] is True
-    assert mock_sns.publish.call_count == 1
-
-    # Second dispatch with same report_id
-    result2 = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-100",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-        sns_client=mock_sns,
-    )
-    assert result2["status"] == "skipped"
-    assert result2["reason"] == "already_sent"
-    # SNS publish should not have been called again (zero spam)
-    assert mock_sns.publish.call_count == 1
+    sns = MagicMock()
+    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": TOPIC_A})
+    first = dispatch_notification("tenant-a", "rep-100", "2026-10-19", "Summary", store, sns)
+    second = dispatch_notification("tenant-a", "rep-100", "2026-10-19", "Summary", store, sns)
+    assert first["status"] == "sent" and first["sns_sent"] is True
+    assert second["status"] == "skipped" and second["reason"] == "already_sent"
+    assert sns.publish.call_count == 1
 
 
 def test_notification_partial_channel_retry(store, monkeypatch):
-    mock_sns = MagicMock()
-    # Tenant configured with both SNS topic and Slack webhook
-    store.put(
-        "tenant-a",
-        "META",
-        {
-            "status": "active",
-            "sns_topic_arn": "arn:aws:sns:us-east-1:123456789012:tenant-a",
-            "slack_webhook_url": "https://hooks.slack.com/services/T00/B00/X00",
-        },
-    )
+    sns, slack = MagicMock(), MagicMock(side_effect=[False, True])
+    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": TOPIC_A, "slack_secret_arn": SLACK_A})
+    monkeypatch.setattr("services.reporting.notification.secret_field", lambda *args: "https://hooks.slack.com/services/test")
+    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", slack)
 
-    slack_attempts = []
+    first = dispatch_notification("tenant-a", "rep-200", "2026-10-19", "Summary", store, sns)
+    assert first["status"] == "partial" and first["sns_sent"] and not first["slack_sent"]
+    assert store.get("tenant-a", "NOTIF#rep-200")["status"] == "partial"
+    created_at = store.get("tenant-a", "NOTIF#rep-200")["created_at"]
+    second = dispatch_notification("tenant-a", "rep-200", "2026-10-19", "Summary", store, sns)
+    assert second["status"] == "sent" and second["sns_sent"] and second["slack_sent"]
+    third = dispatch_notification("tenant-a", "rep-200", "2026-10-19", "Summary", store, sns)
+    assert third["status"] == "skipped"
+    assert sns.publish.call_count == 1 and slack.call_count == 2
+    assert store.get("tenant-a", "NOTIF#rep-200")["created_at"] == created_at
 
-    def mock_slack_fail(url, text, tenant_id, period):
-        slack_attempts.append("fail")
-        return False
 
-    def mock_slack_success(url, text, tenant_id, period):
-        slack_attempts.append("success")
-        return True
+def test_sns_retry_does_not_resend_successful_slack(store, monkeypatch):
+    sns = MagicMock()
+    sns.publish.side_effect = [TimeoutError("unavailable"), {}]
+    slack = MagicMock(return_value=True)
+    resolver = MagicMock(return_value="https://hooks.slack.com/services/test")
+    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": TOPIC_A, "slack_secret_arn": SLACK_A})
+    monkeypatch.setattr("services.reporting.notification.secret_field", resolver)
+    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", slack)
+    first = dispatch_notification("tenant-a", "rep-retry", "2026-10-19", "Summary", store, sns)
+    second = dispatch_notification("tenant-a", "rep-retry", "2026-10-19", "Summary", store, sns)
+    assert first["status"] == "partial" and first["slack_sent"] and not first["sns_sent"]
+    assert second["status"] == "sent" and second["sns_error"] is None
+    assert sns.publish.call_count == 2 and slack.call_count == 1 and resolver.call_count == 1
 
-    # 1. Attempt 1: SNS succeeds, but Slack fails
-    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", mock_slack_fail)
-    res1 = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-200",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-        sns_client=mock_sns,
-    )
-    assert res1["status"] == "partial"
-    assert res1["sns_sent"] is True
-    assert res1["slack_sent"] is False
-    assert mock_sns.publish.call_count == 1
-    assert slack_attempts == ["fail"]
 
-    # Verify state in DynamoDB
-    notif_rec = store.get("tenant-a", "NOTIF#rep-200")
-    assert notif_rec["sns_sent"] is True
-    assert notif_rec["slack_sent"] is False
-    assert notif_rec["status"] == "partial"
+def test_sns_success_is_saved_before_slack_secret_is_read(store, monkeypatch, caplog):
+    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": TOPIC_A, "slack_secret_arn": SLACK_A})
 
-    # 2. Attempt 2 (Retry): Slack is now healthy and succeeds
-    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", mock_slack_success)
-    res2 = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-200",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-        sns_client=mock_sns,
-    )
-    # SNS must NOT be called again (avoiding duplicate email to customer)
-    assert mock_sns.publish.call_count == 1
-    assert slack_attempts == ["fail", "success"]
-    assert res2["status"] == "sent"
-    assert res2["sns_sent"] is True
-    assert res2["slack_sent"] is True
+    def failed_secret(*args):
+        saved = store.get("tenant-a", "NOTIF#rep-secret-failure")
+        assert saved["sns_sent"] is True and saved["status"] == "partial"
+        raise TimeoutError("sensitive-secret-value")
 
-    # 3. Attempt 3: All channels already sent -> should skip
-    res3 = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-200",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-        sns_client=mock_sns,
-    )
-    assert res3["status"] == "skipped"
-    assert mock_sns.publish.call_count == 1
-    assert len(slack_attempts) == 2
+    monkeypatch.setattr("services.reporting.notification.secret_field", failed_secret)
+    result = dispatch_notification("tenant-a", "rep-secret-failure", "2026-10-19", "Summary", store, MagicMock())
+    assert result["status"] == "partial" and result["slack_error"] == "slack_channel_unavailable"
+    assert "sensitive-secret-value" not in caplog.text
+    assert "sensitive-secret-value" not in json.dumps(result)
 
 
 def test_notification_none_configured(store):
-    store.put("tenant-a", "META", {"status": "active"})
-    res = dispatch_notification(
-        tenant_id="tenant-a",
-        report_id="rep-300",
-        period="2026-10-19",
-        summary_text="Daily summary test",
-        store=store,
-    )
-    assert res["status"] == "none_configured"
-    assert res["sns_sent"] is False
-    assert res["slack_sent"] is False
+    result = dispatch_notification("tenant-a", "rep-300", "2026-10-19", "Summary", store)
+    assert result["status"] == "none_configured"
+    assert result["sns_sent"] is False and result["slack_sent"] is False
 
 
-def test_sns_message_carries_tenant_attribute(store):
-    mock_sns = MagicMock()
-    store.put("tenant-a", "META", {"status": "active", "sns_topic_arn": "arn:aws:sns:us-east-1:123456789012:shared"})
-    dispatch_notification("tenant-a", "rep-400", "2026-10-19", "Summary", store, sns_client=mock_sns)
-    attributes = mock_sns.publish.call_args.kwargs["MessageAttributes"]
-    assert attributes == {"tenant_id": {"DataType": "String", "StringValue": "tenant-a"}}
-
-
-def test_shared_topic_filter_policy_isolates_tenants():
-    """Each tenant's email subscription only matches messages tagged with that tenant."""
-    import json
-
-    import boto3
-    from moto import mock_aws
-
-    from scripts.subscribe_tenant_email import subscribe
-
+def test_each_email_subscribes_to_its_tenant_topic():
     with mock_aws():
-        sns = boto3.client("sns", region_name="ap-southeast-1")
-        topic = sns.create_topic(Name="alerts")["TopicArn"]
-        subscribe(topic, "tenant-a", "a@example.com", sns)
-        subscribe(topic, "tenant-b", "b@example.com", sns)
-        subs = sns.list_subscriptions_by_topic(TopicArn=topic)["Subscriptions"]
-        policies = {
-            s["Endpoint"]: json.loads(sns.get_subscription_attributes(SubscriptionArn=s["SubscriptionArn"])["Attributes"]["FilterPolicy"])
-            for s in subs
-        }
-    assert policies == {"a@example.com": {"tenant_id": ["tenant-a"]}, "b@example.com": {"tenant_id": ["tenant-b"]}}
+        sns = boto3.client("sns", region_name="us-east-1")
+        for tenant in ("tenant-a", "tenant-b"):
+            topic = sns.create_topic(Name=f"{STACK}-tenant-{tenant}")["TopicArn"]
+            subscribe(topic, tenant, f"{tenant}@example.com", sns, stack_name=STACK)
+            subs = sns.list_subscriptions_by_topic(TopicArn=topic)["Subscriptions"]
+            assert [s["Endpoint"] for s in subs] == [f"{tenant}@example.com"]
+            attributes = sns.get_subscription_attributes(SubscriptionArn=subs[0]["SubscriptionArn"])["Attributes"]
+            assert json.loads(attributes["FilterPolicy"]) == {"tenant_id": [tenant]}
+
+
+@pytest.mark.parametrize("topic", [TOPIC_B, "arn:aws:sns:us-east-1:123456789012:shared"])
+def test_subscribe_rejects_other_tenant_or_shared_topic(topic):
+    sns = MagicMock()
+    with pytest.raises(ValueError, match="topic_does_not_match_tenant"):
+        subscribe(topic, "tenant-a", "a@example.com", sns, stack_name=STACK)
+    sns.subscribe.assert_not_called()
 
 
 def test_notification_handler_raises_so_async_invoke_retries(store, monkeypatch):
-    import pytest
-
-    from services.reporting.notification import handler
-
-    store.put("tenant-a", "META", {"status": "active", "slack_webhook_url": "https://hooks.slack.com/x"})
-    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", lambda *a: False)
-    with pytest.raises(RuntimeError):
+    store.put("tenant-a", "META", {"status": "active", "slack_secret_arn": SLACK_A})
+    monkeypatch.setattr("services.reporting.notification.secret_field", lambda *args: "https://hooks.slack.com/services/test")
+    monkeypatch.setattr("services.reporting.notification.send_slack_webhook", lambda *args: False)
+    with pytest.raises(RuntimeError, match="notification failed"):
         handler({"tenant_id": "tenant-a", "report_id": "rep-500", "period": "2026-10-19"}, store=store)
 
 
 def test_aggregator_hands_off_to_notification_lambda(store, monkeypatch):
-    import json
-
-    from services.reporting.aggregator import trigger_notification
-
     monkeypatch.setenv("NOTIFICATION_FUNCTION_NAME", "notify-fn")
     lam = MagicMock()
     result = trigger_notification("tenant-a", "rep-600", "2026-10-19", "Summary", store, lambda_client=lam)
     assert result == {"status": "queued", "function": "notify-fn"}
     call = lam.invoke.call_args.kwargs
-    assert call["FunctionName"] == "notify-fn"
-    assert call["InvocationType"] == "Event"
+    assert call["FunctionName"] == "notify-fn" and call["InvocationType"] == "Event"
     assert json.loads(call["Payload"])["tenant_id"] == "tenant-a"
 
 
-def test_aggregator_notifies_in_process_when_invoke_fails(store, monkeypatch):
-    from services.reporting.aggregator import trigger_notification
-
+def test_failed_handoff_raises_without_sending_inline(store, monkeypatch):
     monkeypatch.setenv("NOTIFICATION_FUNCTION_NAME", "notify-fn")
+    inline = MagicMock()
+    monkeypatch.setattr("services.reporting.aggregator.dispatch_notification", inline)
     lam = MagicMock()
     lam.invoke.side_effect = RuntimeError("throttled")
-    store.put("tenant-a", "META", {"status": "active"})
-    result = trigger_notification("tenant-a", "rep-700", "2026-10-19", "Summary", store, lambda_client=lam)
-    assert result["status"] == "none_configured"
+    with pytest.raises(RuntimeError, match="throttled"):
+        trigger_notification("tenant-a", "rep-700", "2026-10-19", "Summary", store, lambda_client=lam)
+    inline.assert_not_called()
