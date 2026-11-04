@@ -47,7 +47,7 @@ SKIP ở kiểm thử quyền là phần che header, vì các source của `grou
 
 ## Giới hạn đã biết
 
-- **Đăng ký mở cho mọi người có link.** Mỗi workspace có báo cáo 08:00 và gọi Gemini mỗi ngày, kể cả khi chưa có dữ liệu, nên quota Gemini có thể bị tiêu hao. Chưa có giới hạn tổng số tài khoản hoặc workspace.
+- **Đăng ký mở cho mọi người có link.** Chưa có giới hạn tổng số tài khoản hoặc workspace. Mỗi workspace có báo cáo 08:00; khi có dữ liệu thì gọi Gemini, nên quota vẫn có thể bị tiêu hao. Báo cáo không có giá hợp lệ không gọi AI (`ai_status=skipped_no_data`).
 - **Key Gemini gói miễn phí.** Nội dung gửi đi có thể được Google dùng để cải thiện sản phẩm theo điều khoản gói không trả phí; không gửi dữ liệu giá thật của doanh nghiệp qua gói này.
 - **Báo cáo Gemini theo lịch của `group07` chưa được kiểm chứng.** Đã thử trên tenant tạm; lần theo lịch đầu tiên là 08:00 ngày 05/11. Báo cáo 08:00 ngày 04/11 chạy trên code cũ: `NOTIF#` ghi `sent`, nhưng báo cáo có 0 sản phẩm và cả 3 nguồn bị coi là quá hạn.
 - **Lỗi Gemini thật chỉ có unit test.** `fallback_quantitative` đã xảy ra trên AWS một lần do secret rỗng; lỗi từ phía API Gemini chưa được thử.

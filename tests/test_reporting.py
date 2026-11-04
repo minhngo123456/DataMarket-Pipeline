@@ -221,10 +221,7 @@ def test_prompt_with_no_data_says_so():
     assert "ổn định" not in prompt
 
 
-def test_aggregator_gives_the_model_real_sources_and_no_invented_reference(store, monkeypatch):
-    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
-    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
-    boto3.client("s3").create_bucket(Bucket="reports-bucket-test")
+def seed_observation(store):
     store.observations.put_item(
         Item={
             "pk": "T#tenant-a#P#phone",
@@ -242,6 +239,13 @@ def test_aggregator_gives_the_model_real_sources_and_no_invented_reference(store
             "expires_at": int(NOW.timestamp()) + 86400,
         }
     )
+
+
+def test_aggregator_gives_the_model_real_sources_and_no_invented_reference(store, monkeypatch):
+    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
+    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
+    boto3.client("s3").create_bucket(Bucket="reports-bucket-test")
+    seed_observation(store)
     seen = {}
 
     class FakeClient:
@@ -257,6 +261,29 @@ def test_aggregator_gives_the_model_real_sources_and_no_invented_reference(store
     assert seen["prices"] == [{"product_id": "phone", "source_id": "vendor", "price": Decimal("100")}]
 
 
+def test_report_without_prices_never_builds_an_ai_client(store, monkeypatch):
+    monkeypatch.delenv("NOTIFICATION_FUNCTION_NAME", raising=False)
+    monkeypatch.setenv("GEMINI_SECRET_ARN", "arn:gemini")
+    monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
+    s3 = boto3.client("s3")
+    s3.create_bucket(Bucket="reports-bucket-test")
+
+    def must_not_call(*args, **kwargs):
+        raise AssertionError("no AI call without data")
+
+    monkeypatch.setattr("services.reporting.aggregator.build_report_client", must_not_call)
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", must_not_call)
+    result = process_report_job({"tenant_id": "tenant-a", "job_id": "job-empty", "scheduled_at": iso(NOW)}, store)
+
+    record = store.get("tenant-a", "REPORT#" + result["report_id"])
+    assert record["status"] == "ready"
+    assert record["ai_status"] == "skipped_no_data"
+    assert (record["ai_provider"], record["ai_model"]) == ("none", "none")
+    assert "không dùng AI" in record["summary"]
+    stored = json.loads(s3.get_object(Bucket="reports-bucket-test", Key=record["s3_key"])["Body"].read())
+    assert stored["ai_status"] == "skipped_no_data"
+
+
 def test_aggregator_records_the_provider_and_model(store, monkeypatch):
     monkeypatch.delenv("GEMINI_SECRET_ARN", raising=False)
     monkeypatch.delenv("ANTHROPIC_SECRET_ARN", raising=False)
@@ -265,6 +292,7 @@ def test_aggregator_records_the_provider_and_model(store, monkeypatch):
     monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
     s3 = boto3.client("s3")
     s3.create_bucket(Bucket="reports-bucket-test")
+    seed_observation(store)
 
     class FakeClient:
         def generate_report_summary(self, summary):
@@ -533,6 +561,7 @@ def test_failed_notification_handoff_reuses_stored_report_on_retry(store, monkey
 
     monkeypatch.setenv("NOTIFICATION_FUNCTION_NAME", "notify-fn")
     monkeypatch.delenv("REPORTS_BUCKET", raising=False)
+    seed_observation(store)
     ai = MagicMock()
     ai.generate_report_summary.return_value = {"status": "ai_generated", "text": "Stored summary"}
     lam = MagicMock()

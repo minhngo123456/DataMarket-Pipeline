@@ -55,10 +55,11 @@ def test_header_problem_compares_the_returned_value():
     assert "not returned" in header_problem(payload, "c", "***")
 
 
-def test_report_problem_expects_the_mock_text_to_be_ready():
-    assert report_problem({"ai_status": "mock_generated", "status": "ready"}) is None
+def test_report_problem_expects_a_ready_report_that_skipped_ai():
+    assert report_problem({"ai_status": "skipped_no_data", "status": "ready"}) is None
     assert report_problem({"ai_status": "fallback_quantitative", "status": "partial"})
-    assert report_problem({"ai_status": "mock_generated", "status": "partial"})
+    assert report_problem({"ai_status": "ai_generated", "status": "ready"})
+    assert report_problem({"ai_status": "skipped_no_data", "status": "partial"})
     assert report_problem(None)
 
 

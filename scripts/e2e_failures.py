@@ -91,8 +91,8 @@ def header_problem(payload, source_id, expected):
 def report_problem(report):
     if not report:
         return "no report was created"
-    if report.get("ai_status") != "mock_generated":
-        return f"expected ai_status mock_generated, got {report.get('ai_status')}"
+    if report.get("ai_status") != "skipped_no_data":
+        return f"expected ai_status skipped_no_data, got {report.get('ai_status')}"
     if report.get("status") != "ready":
         return f"expected status ready, got {report.get('status')}"
     return None
@@ -239,7 +239,7 @@ def run_scenarios(store, sqs, s3, cloudwatch, outputs, stack, web_origin, admin,
     record("missing URL fails the job without retries", terminal_job_problem(job, MISSING_ERRORS))
     print(f"404 source ended with: {(job or {}).get('error')}", flush=True)
 
-    # (b) and (c): the report succeeds with the mock text, then its notification fails.
+    # (b) and (c): the tenant has no prices, so the report skips AI, then its notification fails.
     status, trigger = admin("POST", "/reports/trigger", {})
     record("admin triggers a report", None if status == 202 else f"expected 202, got {status}")
     report_job = trigger.get("job_id")
@@ -248,7 +248,7 @@ def run_scenarios(store, sqs, s3, cloudwatch, outputs, stack, web_origin, admin,
         return next(iter(admin("GET", "/reports")[1].get("data", [])), None)
 
     report = poll(first_report, timeout=300)
-    record("report is stored with the mock text", report_problem(report))
+    record("report without data is stored without calling AI", report_problem(report))
     if report:
         job = poll(lambda: job_is_final(store, report_job), timeout=60)
         record("report job completes", None if job and job["status"] == "completed" else f"job {job}")
