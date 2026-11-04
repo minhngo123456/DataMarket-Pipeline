@@ -25,7 +25,7 @@ from marketdata.contracts import iso, stable_id
 from marketdata.repository import DynamoStore, pk
 from scripts.cleanup_smoke_tenants import key_of, s3_versions, scan_keys
 from scripts.e2e_permissions import add_member, api_caller, ensure_user, id_token, user_sub
-from scripts.smoke_test_aws import get_stack_outputs
+from scripts.verify_aws import get_stack
 
 TENANT = "e2e-failures"
 ADMIN_EMAIL = "e2e-fail-admin@example.invalid"
@@ -150,8 +150,14 @@ def queue_depth(sqs, queue_url):
 
 
 def alarm_state(cloudwatch, stack, logical_id):
-    alarms = cloudwatch.describe_alarms(AlarmNamePrefix=f"{stack}-{logical_id}-")["MetricAlarms"]
+    alarms = cloudwatch.describe_alarms(AlarmNamePrefix=f"{stack}-{logical_id}")["MetricAlarms"]
     return alarms[0]["StateValue"] if alarms else None
+
+
+def unused_topic_arn(stack_id, stack_name):
+    """The name the notification function accepts for this tenant, with no topic behind it."""
+    _, partition, _, region, account, _ = stack_id.split(":", 5)
+    return f"arn:{partition}:sns:{region}:{account}:{stack_name}-tenant-{TENANT}"
 
 
 def provision(store, cognito, pool_id, unused_topic_arn):
@@ -322,10 +328,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
-    cfn = session.client("cloudformation")
-    outputs = get_stack_outputs(cfn, args.stack)
-    parameters = cfn.describe_stacks(StackName=args.stack)["Stacks"][0]["Parameters"]
-    web_origin = next(p["ParameterValue"] for p in parameters if p["ParameterKey"] == "WebOrigin")
+    stack, _ = get_stack(session.client("cloudformation"), args.stack)
+    outputs = {item["OutputKey"]: item["OutputValue"] for item in stack["Outputs"]}
+    web_origin = next(p["ParameterValue"] for p in stack["Parameters"] if p["ParameterKey"] == "WebOrigin")
     store = DynamoStore(
         outputs["ControlTable"],
         outputs["ObservationsTable"],
@@ -362,7 +367,7 @@ def main(argv=None):
             print("  " + line)
         return 0
 
-    passwords = provision(store, cognito, pool_id, outputs["NotificationTopicArn"] + "-e2e-none")
+    passwords = provision(store, cognito, pool_id, unused_topic_arn(stack["StackId"], args.stack))
     endpoint = outputs["HttpApiEndpoint"]
     admin = api_caller(endpoint, id_token(cognito, pool_id, client_id, ADMIN_EMAIL, passwords[ADMIN_EMAIL]))
     viewer = api_caller(endpoint, id_token(cognito, pool_id, client_id, VIEWER_EMAIL, passwords[VIEWER_EMAIL]))
