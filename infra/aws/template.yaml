@@ -940,7 +940,7 @@ Resources:
           RequireUppercase: true
           RequireNumbers: true
       AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
+        AllowAdminCreateUserOnly: false
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -1017,7 +1017,6 @@ Resources:
       - Statement:
         - Effect: Allow
           Action:
-          - cognito-idp:AdminCreateUser
           - cognito-idp:AdminGetUser
           Resource:
             Fn::GetAtt:
@@ -1264,6 +1263,17 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn:
         Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+  RoutePostTenants:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: HttpApi
+      RouteKey: POST /tenants
+      AuthorizationType: JWT
+      AuthorizerId:
+        Ref: JWTAuthorizer
+      Target:
+        Fn::Sub: integrations/${ApiIntegration}
   RouteGetMe:
     Type: AWS::ApiGatewayV2::Route
     Properties:

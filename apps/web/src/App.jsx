@@ -1,7 +1,12 @@
 import { Authenticator } from '@aws-amplify/ui-react';
+import { I18n } from 'aws-amplify/utils';
 import { BrowserRouter } from 'react-router-dom';
+import { AUTH_TEXT_VI, authServices } from './authServices.js';
 import { isCognitoConfigured } from './aws-config.js';
 import { AppRoutes } from './components/AppRoutes.jsx';
+
+I18n.putVocabulariesForLanguage('vi', AUTH_TEXT_VI);
+I18n.setLanguage('vi');
 
 function ConfigurationHelp() {
   return (
@@ -23,8 +28,7 @@ export default function App() {
 
   return (
     <div className="auth-shell">
-      {/* Accounts are created by an admin (Cognito AllowAdminCreateUserOnly), so self sign-up is hidden. */}
-      <Authenticator loginMechanisms={['email']} hideSignUp>
+      <Authenticator loginMechanisms={['email']} services={authServices}>
         {({ user, signOut }) => (
           <BrowserRouter>
             <AppRoutes cognitoUser={user} signOut={signOut} />

@@ -148,10 +148,8 @@ def test_configured_cognito_pool_requires_sub_and_does_not_verify_email(store, m
     monkeypatch.setenv("USER_POOL_ID", "us-east-1_example")
     cognito = boto3.client("cognito-idp")
     with Stubber(cognito) as stub:
-        stub.add_response("admin_create_user", {"User": {"Username": "new@example.com"}}, {
+        stub.add_response("admin_get_user", {"Username": "new@example.com"}, {
             "UserPoolId": "us-east-1_example", "Username": "new@example.com",
-            "UserAttributes": [{"Name": "email", "Value": "new@example.com"}],
-            "DesiredDeliveryMediums": ["EMAIL"],
         })
         event = make_event("POST", "/members/invite", "admin-a", {"email": "new@example.com"})
         auth = AuthContext("admin-a", "tenant-a", "admin", {})
@@ -167,7 +165,6 @@ def test_existing_cognito_email_in_other_tenant_is_not_reassigned(store, monkeyp
     store.save_member("tenant-b", "existing-sub", "analyst", "existing@example.com")
     cognito = boto3.client("cognito-idp")
     with Stubber(cognito) as stub:
-        stub.add_client_error("admin_create_user", service_error_code="UsernameExistsException")
         stub.add_response("admin_get_user", {
             "Username": "existing@example.com",
             "UserAttributes": [{"Name": "sub", "Value": "existing-sub"}],
@@ -182,7 +179,7 @@ def test_existing_cognito_email_in_other_tenant_is_not_reassigned(store, monkeyp
     assert store.get("tenant-a", "MEMBER#existing-sub") is None
 
 
-def test_invitation_retry_recovers_after_cognito_success_and_membership_failure(store, monkeypatch):
+def test_adding_a_member_can_be_retried_after_the_membership_write_fails(store, monkeypatch):
     monkeypatch.setenv("USER_POOL_ID", "us-east-1_example")
     cognito = boto3.client("cognito-idp")
     auth = AuthContext("admin-a", "tenant-a", "admin", {})
@@ -193,16 +190,15 @@ def test_invitation_retry_recovers_after_cognito_success_and_membership_failure(
         raise Conflict("membership_changed_retry_request")
 
     with Stubber(cognito) as stub:
-        stub.add_response("admin_create_user", {"User": {
-            "Username": "retry@example.com", "Attributes": [{"Name": "sub", "Value": "retry-sub"}],
-        }})
+        stub.add_response("admin_get_user", {
+            "Username": "retry@example.com", "UserAttributes": [{"Name": "sub", "Value": "retry-sub"}],
+        })
         monkeypatch.setattr(store, "save_member", fail_membership)
         with pytest.raises(Conflict):
             handle_invite_member(event, store, auth, cognito=cognito)
         assert membership(store, "retry-sub") is None
         assert store.get("tenant-a", "MEMBER#retry-sub") is None
 
-        stub.add_client_error("admin_create_user", service_error_code="UsernameExistsException")
         stub.add_response("admin_get_user", {
             "Username": "retry@example.com", "UserAttributes": [{"Name": "sub", "Value": "retry-sub"}],
         })

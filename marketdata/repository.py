@@ -141,6 +141,39 @@ class DynamoStore:
                 # Re-read after a concurrent member update; never apply stale quota or ownership.
         raise Conflict("membership_changed_retry_request")
 
+    def create_tenant(self, tenant_id, user_id, name, email):
+        """Create a tenant with this user as its Admin, only if the user has no membership yet.
+
+        The condition on U#<sub> also covers disabled members, so nobody leaves a tenant
+        that locked them out by creating another one.
+        """
+        tenant_id, user_id = identifier(tenant_id), identifier(user_id)
+        absent = {"ConditionExpression": "attribute_not_exists(pk)"}
+        now = iso(datetime.now(UTC))
+        try:
+            self.client.transact_write_items(TransactItems=[
+                {"Put": {"TableName": self.control_name, **absent, "Item": serialized({
+                    "pk": pk(tenant_id), "sk": "META", "status": "active", "name": name,
+                    "product_count": 0, "max_skus": 100, "max_sources": 3,
+                    "membership_version": 1, "member_count": 1, "created_at": now,
+                })}},
+                {"Put": {"TableName": self.control_name, **absent, "Item": serialized({
+                    "pk": "U#" + user_id, "sk": "MEMBERSHIP", "tenant_id": tenant_id, "status": "active",
+                })}},
+                {"Put": {"TableName": self.control_name, **absent, "Item": serialized({
+                    "pk": pk(tenant_id), "sk": "MEMBER#" + user_id,
+                    "role": "admin", "status": "active", "email": email,
+                })}},
+            ])
+        except self.client.exceptions.TransactionCanceledException as exc:
+            codes = {r.get("Code") for r in exc.response.get("CancellationReasons", [])}
+            if "ConditionalCheckFailed" in codes:
+                raise Conflict("user_already_has_membership") from exc
+            if "TransactionConflict" in codes:
+                raise Conflict("membership_changed_retry_request") from exc
+            raise
+        return self.get(tenant_id, "META")
+
     def source(self, tenant_id, source_id):
         self.tenant(tenant_id)
         result = self.get(tenant_id, "SOURCE#" + identifier(source_id))

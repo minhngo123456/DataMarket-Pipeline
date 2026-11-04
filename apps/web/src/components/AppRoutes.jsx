@@ -1,6 +1,7 @@
 import { Alert, Button, Result, Spin } from 'antd';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useUser } from '../hooks/useUser.js';
+import { CreateWorkspace } from './CreateWorkspace.jsx';
 import { WorkspaceLayout } from './WorkspaceLayout.jsx';
 import { RoleGuard } from './RoleGuard.jsx';
 import { CatalogPage } from '../pages/Catalog/CatalogPage.jsx';
@@ -12,7 +13,7 @@ import { SourceListPage } from '../pages/Sources/SourceListPage.jsx';
 import { UploadPage } from '../pages/Upload/UploadPage.jsx';
 
 export function AppRoutes({ cognitoUser, signOut }) {
-  const { user, loading, isMock, error, retry } = useUser();
+  const { user, loading, isMock, error, needsWorkspace, retry } = useUser();
 
   if (loading) {
     return (
@@ -20,6 +21,16 @@ export function AppRoutes({ cognitoUser, signOut }) {
         <Spin size="large" />
         <span>Đang tải hồ sơ và quyền truy cập…</span>
       </main>
+    );
+  }
+
+  if (needsWorkspace) {
+    return (
+      <CreateWorkspace
+        email={cognitoUser?.signInDetails?.loginId}
+        signOut={signOut}
+        onChanged={retry}
+      />
     );
   }
 

@@ -15,11 +15,18 @@ const MOCK_USER = {
   },
 };
 
+/** GET /me refused because the account belongs to no tenant yet, or was disabled in one. */
+export function hasNoMembership(error) {
+  return error?.response?.status === 403
+    && error.response.data?.error?.message === 'membership_unavailable';
+}
+
 export function useUser() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isMock, setIsMock] = useState(false);
   const [error, setError] = useState(null);
+  const [needsWorkspace, setNeedsWorkspace] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   const retry = useCallback(() => {
@@ -36,13 +43,19 @@ export function useUser() {
         setUser(currentUser);
         setIsMock(false);
         setError(null);
+        setNeedsWorkspace(false);
       })
       .catch((requestError) => {
         if (controller.signal.aborted) {
           return;
         }
 
-        if (mockFallbackEnabled) {
+        if (hasNoMembership(requestError)) {
+          setUser(null);
+          setIsMock(false);
+          setError(null);
+          setNeedsWorkspace(true);
+        } else if (mockFallbackEnabled) {
           setUser(MOCK_USER);
           setIsMock(true);
           setError(null);
@@ -61,5 +74,5 @@ export function useUser() {
     return () => controller.abort();
   }, [attempt]);
 
-  return { user, loading, isMock, error, retry };
+  return { user, loading, isMock, error, needsWorkspace, retry };
 }
