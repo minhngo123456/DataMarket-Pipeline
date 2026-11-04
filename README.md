@@ -1,6 +1,6 @@
 # MarketData Pipeline
 
-> **Trạng thái local:** Đã có phần Python/hạ tầng của Hoàng, CSV worker tham chiếu, API/Web workers của Hướng, API nghiệp vụ của Hiếu (đã gắn vào SAM) và giao diện web của Minh. Bộ kiểm thử giả lập AWS chạy local; chưa triển khai AWS thật. Aggregator đã là Lambda đọc ReportQueue; sau khi lưu báo cáo, nó gọi bất đồng bộ Notification Lambda để gửi email qua SNS và Slack qua webhook nếu tenant cấu hình. Stack dùng một SNS topic chung; mỗi tin có thuộc tính `tenant_id` và email phải đăng ký bằng `python -m scripts.subscribe_tenant_email` để có filter policy theo tenant, không đăng ký trực tiếp trên console. Key Claude truyền qua tham số `AnthropicApiKey`; để trống thì báo cáo dùng bản tóm tắt số liệu dự phòng.
+> Backend dùng Python/SAM, giao diện dùng React. Bản hợp nhất ngày 04/11/2026 nhận Notification Lambda riêng, retry từng kênh, cấu hình nguồn qua UI và ID quan sát theo nội dung. Phần của Hoàng bổ sung transaction membership, kiểm tra đích gửi theo tenant và đọc secret bằng ARN. Kết quả AWS ngày 01/11 và trạng thái kiểm thử bản hợp nhất nằm trong [bàn giao của Hoàng](docs/hoang-final-handover.md).
 
 MarketData Pipeline là phần mềm cung cấp qua trình duyệt theo mô hình dịch vụ, giúp doanh nghiệp bán lẻ và thương mại điện tử gom, chuẩn hóa và so sánh giá từ file CSV, REST API và trang HTML được phép thu thập.
 
@@ -28,7 +28,7 @@ Hạn mức Pilot trong tài liệu thiết kế: tối đa 100 SKU, 3 nguồn v
 ├── .github/                 # Mẫu issue và pull request
 ├── apps/web/                # Ứng dụng trình duyệt
 ├── docs/                    # Kiến trúc, hợp đồng dữ liệu, kế hoạch và ADR
-├── infra/aws/               # Hạ tầng AWS dự kiến
+├── infra/aws/               # Template hạ tầng AWS
 └── services/
     ├── api/                 # API, xác thực quyền và quota
     ├── ingestion/            # Nhận file và thu thập nguồn
@@ -61,7 +61,7 @@ flowchart LR
     DB -->|Dữ liệu theo tenant| AGG
     AGG <-->|HTTPS| AI[Claude API]
     AGG --> REP[S3 Reports và trạng thái DynamoDB]
-    AGG -->|Sau khi lưu báo cáo| NOTIFY[Notification Lambda]
+    AGG -->|Invoke bất đồng bộ sau khi lưu báo cáo| NOTIFY[Notification Lambda]
     NOTIFY --> SNS[SNS email theo tenant]
     NOTIFY --> SLACK[Slack webhook theo tenant]
     API -->|Đọc báo cáo sau kiểm tra quyền| REP
