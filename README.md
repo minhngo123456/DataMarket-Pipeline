@@ -17,6 +17,7 @@ Hạn mức Pilot trong tài liệu thiết kế: tối đa 100 SKU, 3 nguồn v
 
 ## Trạng thái hiện tại
 
+- Môi trường dùng chung và kết quả kiểm thử trên AWS: xem [trạng thái triển khai](docs/deployment-status.md).
 - Phần hạ tầng và chuẩn hóa của Hoàng: code tại `marketdata/`, `services/normalizer/`, SAM template tại `infra/aws/template.yaml`. Xem [hướng dẫn chạy và bàn giao của Hoàng](docs/hoang-handover.md).
 - Phần Ingestion: CSV worker do Hoàng thêm làm adapter tham chiếu; Hướng triển khai API và Web HTML workers. Cả ba luồng dùng contract chung và có fixtures/test tích hợp. Xem [hướng dẫn bàn giao của Hướng](docs/huong-handover.md).
 - Lộ trình 5 tuần vẫn là kế hoạch của cả nhóm; không coi kết quả giả lập là đã triển khai toàn bộ hệ thống.

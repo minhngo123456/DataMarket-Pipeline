@@ -43,7 +43,8 @@
 
 - Backend dùng Python 3.12, boto3 và AWS SAM; kiểm thử local bằng pytest/Moto. Giao diện dùng React.
 - Stack `marketdata-hoang-dev` đã triển khai tại `us-east-1`, CloudFront và lịch tự động tắt. CSV/replay, quyền API và kiểm kê cấu hình đã đạt trên AWS; bằng chứng trong tài liệu bàn giao.
-- Bản hợp nhất 04/11 đã có cấu hình URL/header nguồn qua UI/API, report lock và retry thông báo theo kênh. Cần kiểm thử các phần này trên AWS; phân trang/cursor còn cần hoàn thiện.
+- Stack dùng chung `marketdata-dev` tại `ap-southeast-1` chạy bản hợp nhất 04/11, giao diện trên Amplify, CloudFront tắt, lịch tự động bật. Kết quả và giới hạn ghi trong [trạng thái triển khai](deployment-status.md).
+- Bản hợp nhất 04/11 đã có cấu hình URL/header nguồn qua UI/API, report lock và retry thông báo theo kênh. Phân trang/cursor còn cần hoàn thiện.
 - Danh sách endpoint, trang web được phép và chính sách sử dụng dữ liệu của nguồn.
 - Chính sách lưu/xóa dữ liệu, quản trị tenant, log và khôi phục backup.
 - Kênh bảo mật liên hệ, miền triển khai và cấu hình CORS.
@@ -54,4 +55,4 @@ Theo báo cáo đã nộp, Vũ Minh Hoàng phụ trách chính hạ tầng AWS/I
 
 ## Phần đã triển khai
 
-Stack đã kiểm thử ngày 01/11 có CSV/API/Web worker, Normalizer, hai Dispatcher, ApiFunction với 21 route và ReportAggregator. Bản mã hợp nhất ngày 04/11 thêm NotificationFunction riêng và chưa triển khai lại trên stack Hoàng. SNS/Slack theo tenant có template cấp tài nguyên riêng; chưa cấu hình kênh báo cáo thật trong lần kiểm thử của Hoàng. CloudFront không được tạo khi EnableCloudFront=DISABLED; frontend có thể chạy cục bộ với backend AWS.
+Stack đã kiểm thử ngày 01/11 có CSV/API/Web worker, Normalizer, hai Dispatcher, ApiFunction với 21 route và ReportAggregator. Bản mã hợp nhất ngày 04/11 thêm NotificationFunction riêng và chưa triển khai lại trên stack Hoàng, nhưng đã chạy trên `marketdata-dev`. SNS/Slack theo tenant có template cấp tài nguyên riêng; `group07` đã có kênh email, chưa cấu hình Slack. CloudFront không được tạo khi EnableCloudFront=DISABLED; frontend có thể chạy cục bộ với backend AWS.
