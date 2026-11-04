@@ -1,7 +1,8 @@
-"""Claude API integration with token budgeting, mock fallback, and graceful degradation.
+"""AI integration (Anthropic Claude & Google Gemini) with token budgeting, mock fallback, and graceful degradation.
 
-Ensures the daily reporting pipeline remains operational even if the Claude API
-encounters rate limits, timeouts, or network errors.
+Ensures the daily reporting pipeline remains operational even if the AI API
+encounters rate limits, timeouts, or network errors. Supports both Anthropic Claude
+and Google Gemini (free tier via Google AI Studio).
 """
 
 import json
@@ -17,20 +18,25 @@ from services.reporting.templates.prompt_templates import SYSTEM_PROMPT, build_c
 logger = logging.getLogger(__name__)
 
 
-def get_anthropic_api_key(
+def get_ai_api_key(
     api_key: str | None = None,
     secret_name: str | None = None,
     secrets_client=None,
 ) -> str:
-    """Retrieve Anthropic API key with fallback order:
+    """Retrieve AI API key (Gemini or Anthropic) with fallback order:
     1. Explicit api_key argument.
-    2. AWS Secrets Manager (if secret_name or ANTHROPIC_SECRET_NAME is set).
-    3. Environment variable ANTHROPIC_API_KEY (for local development/testing).
+    2. AWS Secrets Manager (if secret_name or GEMINI_SECRET_NAME / ANTHROPIC_SECRET_NAME is set).
+    3. Environment variable GEMINI_API_KEY or ANTHROPIC_API_KEY (for local development/testing).
     """
     if api_key:
         return api_key
 
-    target_secret = secret_name or os.environ.get("ANTHROPIC_SECRET_NAME") or os.environ.get("SECRETS_MANAGER_SECRET_ID")
+    target_secret = (
+        secret_name
+        or os.environ.get("GEMINI_SECRET_NAME")
+        or os.environ.get("ANTHROPIC_SECRET_NAME")
+        or os.environ.get("SECRETS_MANAGER_SECRET_ID")
+    )
     if target_secret:
         try:
             client = secrets_client or boto3.client("secretsmanager")
@@ -41,7 +47,8 @@ def get_anthropic_api_key(
                     parsed = json.loads(secret_str)
                     if isinstance(parsed, dict):
                         return (
-                            parsed.get("ANTHROPIC_API_KEY")
+                            parsed.get("GEMINI_API_KEY")
+                            or parsed.get("ANTHROPIC_API_KEY")
                             or parsed.get("api_key")
                             or parsed.get("apiKey")
                             or secret_str
@@ -51,15 +58,21 @@ def get_anthropic_api_key(
                 return secret_str
         except Exception as exc:
             logger.warning(
-                "Could not retrieve Anthropic API key from Secrets Manager (%s): %s. Falling back to env var.",
+                "Could not retrieve AI API key from Secrets Manager (%s): %s. Falling back to env var.",
                 target_secret,
                 exc,
             )
 
-    return os.environ.get("ANTHROPIC_API_KEY", "")
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+# Backward compatibility alias
+get_anthropic_api_key = get_ai_api_key
 
 
 class ClaudeClient:
+    """Multi-provider AI client supporting Anthropic Claude and Google Gemini."""
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -68,15 +81,35 @@ class ClaudeClient:
         mock_mode: bool | None = None,
         secret_name: str | None = None,
         secrets_client=None,
+        provider: str | None = None,
     ):
-        self.secret_name = secret_name or os.environ.get("ANTHROPIC_SECRET_NAME")
-        self.api_key = get_anthropic_api_key(
+        self.secret_name = (
+            secret_name
+            or os.environ.get("GEMINI_SECRET_NAME")
+            or os.environ.get("ANTHROPIC_SECRET_NAME")
+        )
+        self.api_key = get_ai_api_key(
             api_key=api_key,
             secret_name=self.secret_name,
             secrets_client=secrets_client,
         )
-        # claude-3-5-sonnet-20241022 is retired; CLAUDE_MODEL lets ops switch without a redeploy of code.
-        self.model = model or os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+
+        # Detect provider: 'gemini' or 'anthropic'
+        if provider:
+            self.provider = provider.lower()
+        elif os.environ.get("AI_PROVIDER"):
+            self.provider = os.environ.get("AI_PROVIDER", "").lower()
+        elif bool(os.environ.get("GEMINI_API_KEY")) or (self.api_key and self.api_key.startswith("AIza")):
+            self.provider = "gemini"
+        else:
+            self.provider = "anthropic"
+
+        if self.provider == "gemini":
+            self.model = model or os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+        else:
+            # claude-3-5-sonnet-20241022 is retired; CLAUDE_MODEL lets ops switch without a redeploy of code.
+            self.model = model or os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+
         self.max_tokens = max_tokens
         # Enable mock if explicitly requested or if no API key is configured
         if mock_mode is not None:
@@ -85,13 +118,14 @@ class ClaudeClient:
             self.mock_mode = not bool(self.api_key) or os.environ.get("MOCK_AI", "false").lower() == "true"
 
     def generate_report_summary(self, summary_data: dict) -> dict:
-        """Call Claude API to generate qualitative intelligence report.
+        """Call AI API (Gemini or Claude) to generate qualitative intelligence report.
 
         Returns:
             dict containing:
                 - text: The narrative generated by AI or fallback summary
                 - status: 'ai_generated' or 'fallback_quantitative'
                 - token_usage: Token usage statistics if available
+                - model: Model name used
         """
         prompt = build_claude_prompt(summary_data)
 
@@ -99,13 +133,75 @@ class ClaudeClient:
             return self._mock_response(summary_data)
 
         try:
+            if self.provider == "gemini":
+                return self._call_gemini_api(prompt)
             return self._call_anthropic_api(prompt)
         except Exception as exc:
+            provider_name = "Gemini" if self.provider == "gemini" else "Claude"
             logger.warning(
-                "Claude API invocation failed (%s). Falling back to rule-based quantitative summary.",
+                "%s API invocation failed (%s). Falling back to rule-based quantitative summary.",
+                provider_name,
                 exc,
             )
             return self._fallback_response(summary_data, error_reason=str(exc))
+
+    def _call_gemini_api(self, user_prompt: str) -> dict:
+        """Invoke Google Gemini REST API."""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+        payload = {
+            "systemInstruction": {
+                "parts": [{"text": SYSTEM_PROMPT}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": user_prompt}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": self.max_tokens,
+            },
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        text_content = ""
+        for candidate in data.get("candidates", []):
+            content = candidate.get("content", {})
+            for part in content.get("parts", []):
+                text_content += part.get("text", "")
+
+        if not text_content.strip():
+            finish_reason = None
+            if data.get("candidates"):
+                finish_reason = data["candidates"][0].get("finishReason")
+            raise RuntimeError(f"no_report_text (finish_reason={finish_reason})")
+
+        usage = data.get("usageMetadata", {})
+        return {
+            "text": text_content.strip(),
+            "status": "ai_generated",
+            "token_usage": {
+                "input_tokens": usage.get("promptTokenCount", 0),
+                "output_tokens": usage.get("candidatesTokenCount", 0),
+                "total_tokens": usage.get("totalTokenCount", 0),
+            },
+            "model": data.get("modelVersion") or self.model,
+            "provider": "gemini",
+        }
 
     def _call_anthropic_api(self, user_prompt: str) -> dict:
         url = "https://api.anthropic.com/v1/messages"
@@ -149,6 +245,7 @@ class ClaudeClient:
             "status": "ai_generated",
             "token_usage": data.get("usage", {}),
             "model": self.model,
+            "provider": "anthropic",
         }
 
     def _mock_response(self, summary_data: dict) -> dict:
@@ -175,17 +272,19 @@ class ClaudeClient:
             "text": mock_text,
             "status": "mock_generated",
             "token_usage": {"input_tokens": 250, "output_tokens": 150},
-            "model": "mock-claude-3-5",
+            "model": f"mock-{self.model}",
+            "provider": self.provider,
         }
 
     def _fallback_response(self, summary_data: dict, error_reason: str) -> dict:
-        """Graceful fallback when Claude API fails, keeping quantitative data usable."""
+        """Graceful fallback when AI API fails, keeping quantitative data usable."""
         period = summary_data.get("period", "Unknown")
         stats = summary_data.get("stats", {})
 
+        provider_label = "Gemini" if self.provider == "gemini" else "Claude"
         fallback_text = (
             f"### Báo cáo Thị trường ({period}) - Dữ liệu Số Liệu\n\n"
-            f"*Lưu ý: Phân tích định tính từ Claude API tạm thời không khả dụng ({error_reason}). "
+            f"*Lưu ý: Phân tích định tính từ {provider_label} API tạm thời không khả dụng ({error_reason}). "
             f"Toàn bộ số liệu thị trường đã được lưu trữ đầy đủ.*\n\n"
             f"- Tổng sản phẩm theo dõi: {stats.get('total_products', 0)}\n"
             f"- Tổng số quan sát giá: {stats.get('total_observations', 0)}\n"
@@ -197,4 +296,9 @@ class ClaudeClient:
             "status": "fallback_quantitative",
             "error_detail": error_reason,
             "model": "rule-based-fallback",
+            "provider": self.provider,
         }
+
+
+# Alias for clean modern naming
+AIClient = ClaudeClient

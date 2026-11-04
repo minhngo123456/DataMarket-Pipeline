@@ -100,7 +100,7 @@ def process_report_job(
     store.acquire_report_lock(tenant_id, period, job_id=job_id, triggered_by="aggregator")
 
     # 3. Call Claude API (reads key from AWS Secrets Manager or env var fallback)
-    ai_client = claude_client or ClaudeClient(secret_name=os.environ.get("ANTHROPIC_SECRET_NAME"))
+    ai_client = claude_client or ClaudeClient(secret_name=os.environ.get("GEMINI_SECRET_NAME") or os.environ.get("ANTHROPIC_SECRET_NAME"))
     ai_result = ai_client.generate_report_summary(summary_data)
 
     # 4. Save full report artifact into S3

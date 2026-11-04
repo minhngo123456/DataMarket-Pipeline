@@ -13,6 +13,11 @@ Parameters:
     AllowedValues:
     - DISABLED
     - ENABLED
+  GeminiApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Google Gemini API key for report narratives (free tier from Google AI Studio).
   AnthropicApiKey:
     Type: String
     Default: ''
@@ -934,6 +939,8 @@ Resources:
           OBSERVATIONS_TABLE: *id002
           REPORTS_BUCKET:
             Ref: ReportsBucket
+          GEMINI_API_KEY:
+            Ref: GeminiApiKey
           ANTHROPIC_API_KEY:
             Ref: AnthropicApiKey
           ANTHROPIC_SECRET_NAME:

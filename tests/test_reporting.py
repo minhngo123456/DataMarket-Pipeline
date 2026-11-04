@@ -74,6 +74,57 @@ def test_claude_client_graceful_fallback():
     assert "Dữ liệu số đã được tổng hợp thành công" or "Claude API" in result["text"]
 
 
+def test_gemini_client_success(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent["url"] = req.full_url
+        sent["headers"] = dict(req.headers)
+        sent["data"] = json.loads(req.data)
+        return _FakeResponse({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Báo cáo phân tích thị trường từ Gemini AI."}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+                "totalTokenCount": 150,
+            },
+        })
+
+    monkeypatch.setattr("services.reporting.claude_client.urllib.request.urlopen", fake_urlopen)
+    client = ClaudeClient(api_key="AIzaSyDummyKeyForTesting", mock_mode=False)
+    assert client.provider == "gemini"
+    assert client.model == "gemini-1.5-flash"
+
+    result = client.generate_report_summary({"tenant_id": "tenant-a", "period": "2026-10-19", "stats": {}})
+    assert result["status"] == "ai_generated"
+    assert "Gemini AI" in result["text"]
+    assert result["token_usage"]["total_tokens"] == 150
+    assert "x-goog-api-key" in [k.lower() for k in sent["headers"].keys()]
+
+
+def test_get_ai_api_key_from_secrets_and_env(monkeypatch):
+    from services.reporting.claude_client import get_ai_api_key
+
+    class FakeSecretsClient:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": json.dumps({"GEMINI_API_KEY": "AIzaSySecret123"})}
+
+    key = get_ai_api_key(secret_name="test-secret", secrets_client=FakeSecretsClient())
+    assert key == "AIzaSySecret123"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSyEnv456")
+    key = get_ai_api_key()
+    assert key == "AIzaSyEnv456"
+
+
 def test_aggregator_worker_full_pipeline(store, monkeypatch):
     monkeypatch.setenv("REPORTS_BUCKET", "reports-bucket-test")
     s3 = boto3.client("s3")
