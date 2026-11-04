@@ -11,6 +11,7 @@ from botocore.exceptions import ClientError
 from marketdata.contracts import (
     AccessDenied,
     Conflict,
+    InvalidRecord,
     QuotaExceeded,
     identifier,
     iso,
@@ -61,6 +62,83 @@ class DynamoStore:
         if not result or result.get("status") != "active":
             raise AccessDenied("tenant_unavailable")
         return result
+
+    def members(self, tenant_id):
+        self.tenant(tenant_id)
+        return list(self.pages(
+            self.control,
+            KeyConditionExpression=Key("pk").eq(pk(tenant_id)) & Key("sk").begins_with("MEMBER#"),
+            ConsistentRead=True,
+        ))
+
+    def save_member(self, tenant_id, user_id, role, email, status="active", *, must_exist=False):
+        """Write both membership records together without moving a user between tenants.
+
+        The tenant version serializes member changes, including quota checks. Counting
+        existing records also supports tenants created before member_count was stored.
+        All application membership writes must use this method.
+        """
+        tenant_id, user_id = identifier(tenant_id), identifier(user_id)
+        if (role not in ("admin", "analyst", "viewer") and not (must_exist and role is None)) or (
+            status not in ("active", "disabled") and not (must_exist and status is None)
+        ):
+            raise InvalidRecord("invalid_member")
+        for _ in range(3):
+            tenant = self.tenant(tenant_id)
+            version = tenant.get("membership_version")
+            members = self.members(tenant_id)
+            previous = next((m for m in members if m["sk"] == "MEMBER#" + user_id), None)
+            if must_exist and previous is None:
+                raise AccessDenied("member_not_found")
+            membership = self.control.get_item(
+                Key={"pk": "U#" + user_id, "sk": "MEMBERSHIP"}, ConsistentRead=True
+            ).get("Item")
+            if membership and membership.get("tenant_id") != tenant_id:
+                raise Conflict("member_belongs_to_another_tenant")
+            count = len(members) + (previous is None)
+            if count > 5:
+                raise QuotaExceeded("member_limit_reached")
+            record = {
+                **(previous or {}), "pk": pk(tenant_id), "sk": "MEMBER#" + user_id,
+                "role": role if role is not None else previous["role"],
+                "status": status if status is not None else previous["status"],
+                "email": email if email is not None else (previous or {}).get("email"),
+            }
+            values = {":active": "active", ":next": int(version or 0) + 1, ":count": count}
+            condition = "#status = :active AND attribute_not_exists(membership_version)"
+            if version is not None:
+                condition = "#status = :active AND membership_version = :version"
+                values[":version"] = version
+            try:
+                self.client.transact_write_items(TransactItems=[
+                    {"Update": {
+                        "TableName": self.control_name,
+                        "Key": serialized({"pk": pk(tenant_id), "sk": "META"}),
+                        "UpdateExpression": "SET membership_version = :next, member_count = :count",
+                        "ConditionExpression": condition,
+                        "ExpressionAttributeNames": {"#status": "status"},
+                        "ExpressionAttributeValues": serialized(values),
+                    }},
+                    {"Put": {
+                        "TableName": self.control_name,
+                        "Item": serialized({
+                            "pk": "U#" + user_id, "sk": "MEMBERSHIP",
+                            "tenant_id": tenant_id, "status": record["status"],
+                        }),
+                        "ConditionExpression": "attribute_not_exists(pk) OR tenant_id = :tenant",
+                        "ExpressionAttributeValues": serialized({":tenant": tenant_id}),
+                    }},
+                    {"Put": {"TableName": self.control_name, "Item": serialized(record)}},
+                ])
+                return record
+            except self.client.exceptions.TransactionCanceledException as exc:
+                reasons = exc.response.get("CancellationReasons", [])
+                codes = {r.get("Code") for r in reasons}
+                retryable = {"ConditionalCheckFailed", "TransactionConflict"}
+                if not codes.intersection(retryable) or not codes.issubset(retryable | {None, "None"}):
+                    raise
+                # Re-read after a concurrent member update; never apply stale quota or ownership.
+        raise Conflict("membership_changed_retry_request")
 
     def source(self, tenant_id, source_id):
         self.tenant(tenant_id)
@@ -262,6 +340,8 @@ class DynamoStore:
                                     "product_id": product_id,
                                 }
                             ),
+                            "ConditionExpression": "attribute_not_exists(pk) OR product_id = :product",
+                            "ExpressionAttributeValues": serialized({":product": product_id}),
                         }
                     },
                 ]
