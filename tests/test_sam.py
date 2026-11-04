@@ -176,3 +176,46 @@ def test_secret_access_is_scoped_and_conditional():
     assert notification_secrets[0]["Resource"]["Fn::Sub"].endswith(
         ":secret:${AWS::StackName}/tenants/*/slack-*"
     )
+
+
+def test_source_snapshots_are_scoped_and_do_not_trigger_csv_ingestion():
+    resources = translate()["Resources"]
+    for worker in ("APIWorker", "WebWorker"):
+        variables = resources[worker]["Properties"]["Environment"]["Variables"]
+        assert variables["SOURCE_SNAPSHOT_BUCKET"] == {"Ref": "RawBucket"}
+        policies = resources[worker + "ExecutionRole"]["Properties"]["Policies"]
+        s3_statements = [
+            statement
+            for policy in policies
+            for statement in policy["PolicyDocument"]["Statement"]
+            if any(action.startswith("s3:") for action in statement["Action"])
+        ]
+        assert len(s3_statements) == 2
+        object_statement = next(
+            statement for statement in s3_statements if "s3:GetObject" in statement["Action"]
+        )
+        assert object_statement["Effect"] == "Allow"
+        assert set(object_statement["Action"]) == {
+            "s3:GetObject",
+            "s3:GetObjectVersion",
+            "s3:PutObject",
+        }
+        assert object_statement["Resource"] == {
+            "Fn::Sub": "${RawBucket.Arn}/extractor-snapshots/*"
+        }
+        list_statement = next(
+            statement for statement in s3_statements if "s3:ListBucket" in statement["Action"]
+        )
+        assert list_statement["Effect"] == "Allow"
+        assert list_statement["Action"] == ["s3:ListBucket"]
+        assert list_statement["Resource"] == {"Fn::GetAtt": ["RawBucket", "Arn"]}
+        assert list_statement["Condition"] == {
+            "StringLike": {"s3:prefix": "extractor-snapshots/*"}
+        }
+
+    pattern = resources["CSVObjectCreated"]["Properties"]["EventPattern"]
+    assert pattern["detail"]["bucket"]["name"] == [{"Ref": "RawBucket"}]
+    key_filters = pattern["detail"]["object"]["key"]
+    assert key_filters == [{"prefix": "tenants/"}]
+    snapshot_key = "extractor-snapshots/tenant-a/api-supplier/job-1.json"
+    assert not any(snapshot_key.startswith(item["prefix"]) for item in key_filters)

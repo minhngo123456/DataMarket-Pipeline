@@ -32,7 +32,12 @@ from tests.conftest import NOW
 
 
 @pytest.fixture
-def sqs_transform_queue():
+def sqs_transform_queue(monkeypatch):
+    bucket = "worker-snapshots-test"
+    monkeypatch.setenv("SOURCE_SNAPSHOT_BUCKET", bucket)
+    s3 = boto3.client("s3")
+    s3.create_bucket(Bucket=bucket)
+    s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
     sqs = boto3.client("sqs")
     queue_url = sqs.create_queue(QueueName="transform-test")["QueueUrl"]
     return sqs, queue_url

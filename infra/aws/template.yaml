@@ -441,6 +441,8 @@ Resources:
             Ref: TransformQueue
           API_QUEUE_URL:
             Ref: APIQueue
+          SOURCE_SNAPSHOT_BUCKET:
+            Ref: RawBucket
       Events:
         APIJobs:
           Type: SQS
@@ -472,6 +474,8 @@ Resources:
             Ref: TransformQueue
           WEB_QUEUE_URL:
             Ref: WebQueue
+          SOURCE_SNAPSHOT_BUCKET:
+            Ref: RawBucket
       Events:
         WebJobs:
           Type: SQS
@@ -1730,6 +1734,23 @@ Resources:
               - Arn
           - Effect: Allow
             Action:
+            - s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+              - RawBucket
+              - Arn
+            Condition:
+              StringLike:
+                s3:prefix: extractor-snapshots/*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${RawBucket.Arn}/extractor-snapshots/*
+          - Effect: Allow
+            Action:
             - sqs:SendMessage
             Resource:
               Fn::GetAtt:
@@ -1775,6 +1796,23 @@ Resources:
               Fn::GetAtt:
               - ControlTable
               - Arn
+          - Effect: Allow
+            Action:
+            - s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+              - RawBucket
+              - Arn
+            Condition:
+              StringLike:
+                s3:prefix: extractor-snapshots/*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${RawBucket.Arn}/extractor-snapshots/*
           - Effect: Allow
             Action:
             - sqs:SendMessage
