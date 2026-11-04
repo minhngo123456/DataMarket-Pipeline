@@ -2,7 +2,7 @@
 
 Các lệnh dưới đây dùng PowerShell, stack `marketdata-hoang-dev`, profile `marketdata-dev`, Region `us-east-1`. Đổi đồng bộ nếu nhóm dùng môi trường khác. Chạy từ thư mục gốc của repo. Không cần push GitHub để triển khai bản local.
 
-AWS Support đã từ chối quyền tạo CloudFront cho tài khoản đang dùng. Vì vậy giữ `EnableCloudFront=DISABLED`: template không tạo distribution/OAC và các tham chiếu của chúng. Giao diện chạy cục bộ; backend vẫn triển khai trên AWS. Việc chọn nhà cung cấp hosting khác thuộc phần phối hợp với Minh, chưa được coi là hoàn tất.
+AWS Support đã từ chối quyền tạo CloudFront cho tài khoản đang dùng. Vì vậy giữ `EnableCloudFront=DISABLED`: template không tạo distribution/OAC và các tham chiếu của chúng. Trên stack này giao diện chạy cục bộ; backend vẫn triển khai trên AWS. Stack dùng chung `marketdata-dev` tại `ap-southeast-1` có giao diện trên Amplify; cấu hình và kết quả của stack đó nằm trong [trạng thái triển khai](deployment-status.md).
 
 ## 1. Xác nhận tài khoản và trạng thái hiện tại
 

@@ -14,7 +14,7 @@ Các khai báo nằm trong `infra/aws/template.yaml`:
 | IAM DynamoDB/SQS | Đọc/cập nhật ControlTable; nhận/xóa/đổi visibility trên đúng queue đầu vào; gửi dòng vào TransformQueue. Không mở quyền wildcard để xử lý lỗi triển khai. |
 | IAM snapshot | GetObject/GetObjectVersion/PutObject chỉ dưới `extractor-snapshots/*` của RawBucket; ListBucket chỉ với prefix thuộc vùng này. |
 | Snapshot/EventBridge | Khóa `extractor-snapshots/{tenant}/{source}/{job}.json` nằm ngoài `tenants/`, tránh sự kiện snapshot đi vào CSVQueue. |
-| Lịch và cảnh báo | Job Dispatcher theo chu kỳ 6 giờ; `ScheduleState=DISABLED` trong khi chuẩn bị. Sáu cảnh báo DLQ hiện chưa có `AlarmActions`. |
+| Lịch và cảnh báo | Job Dispatcher theo chu kỳ 6 giờ; `ScheduleState=DISABLED` trong khi chuẩn bị. Stack dùng chung đang bật lịch, xem [trạng thái triển khai](deployment-status.md). |
 
 Sáu DLQ alarm theo dõi CSV, API, Web, Transform, Report và Dispatch. Cần phối hợp Hoàng xác định đích nhận, quyền và kịch bản kiểm tra; sự tồn tại của alarm trong template chưa chứng minh thông báo đã được gửi.
 
