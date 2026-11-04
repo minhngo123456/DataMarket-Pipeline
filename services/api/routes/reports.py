@@ -69,6 +69,8 @@ def handle_get_report_detail(
         return error("report_not_found", "Requested report does not exist in your tenant", 404)
 
     s3_key = record.get("s3_key") or f"tenants/{auth.tenant_id}/reports/{report_id}.json"
+    if s3_key != f"tenants/{auth.tenant_id}/reports/{report_id}.json":
+        raise AccessDenied("report_object_not_in_tenant")
     bucket = reports_bucket_name or os.environ.get("REPORTS_BUCKET")
 
     download_url = None

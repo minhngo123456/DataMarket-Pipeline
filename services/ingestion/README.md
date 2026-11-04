@@ -32,7 +32,7 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
    - Đẩy các dòng vào `TransformQueue`.
    - Consumer Lambda được nối với `WebQueue` trong SAM, bật partial batch response.
 
-Các worker chỉ đọc endpoint/URL và headers từ Source do backend lưu. Không ghi headers hoặc credential vào log. Template đã mô tả kết nối worker nhưng chưa được triển khai lên AWS thật.
+Các worker chỉ đọc endpoint/URL và headers từ Source do backend lưu. Không ghi headers hoặc credential vào log. Ba worker đã được triển khai trong stack `marketdata-hoang-dev` ngày 01/11/2026. Luồng CSV và phát lại đã kiểm thử trên AWS; API/HTML mới được kiểm thử bằng fixtures, chưa có kết quả nguồn thật chạy đầu cuối qua UI.
 
 ## Trạng thái job
 

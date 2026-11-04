@@ -1,8 +1,10 @@
 # Bàn giao công việc của Hướng (WBS 4 - Ingestion Workers)
 
+Cập nhật tích hợp ngày 01/11/2026 của Hoàng: stack `marketdata-hoang-dev` đã có ba worker và consumer SQS trên AWS; CSV/replay đã kiểm thử thật. Nguồn API/HTML qua UI chưa có kết quả đầu cuối. Xem [bằng chứng AWS](hoang-final-handover.md); các kết quả Moto bên dưới là kiểm thử local của phần Ingestion.
+
 > **Tác giả:** Phạm Văn Hướng  
 > **Hạng mục:** WBS 4: CSV, API, web tĩnh (F2; 3 extractor và trạng thái nguồn - 64 giờ theo [team-work-split.md](team-work-split.md))  
-> **Trạng thái:** API/Web worker, retry có backoff và cấu hình consumer SAM đã có. CSV worker là adapter tham chiếu do Hoàng thêm; Hướng phối hợp tích hợp và kiểm thử luồng chung. Toàn bộ kiểm thử local đạt; template chưa deploy lên AWS thật.
+> **Trạng thái:** API/Web worker, retry có backoff và cấu hình consumer SAM đã có. CSV worker là adapter tham chiếu do Hoàng thêm; Hướng phối hợp tích hợp và kiểm thử luồng chung. Kiểm thử local đạt; trạng thái AWS theo ghi chú cập nhật trên.
 
 ---
 
@@ -14,7 +16,7 @@
 | **REST API Extractor** | `services/ingestion/api_worker.py` | Tiêu thụ job từ `APIQueue`. Gọi REST API đối tác, bóc tách JSON và kiểm tra trường bắt buộc. Retry lỗi 429/408/5xx/timeout có backoff và `Retry-After`; lỗi xác thực/payload sai được đánh dấu job thất bại. |
 | **HTML Static Web Extractor** | `services/ingestion/web_worker.py` | Tiêu thụ job từ `WebQueue`. Thu thập trang HTML tĩnh được phép, bóc tách bảng giá hoặc thẻ dữ liệu (`data-*`), kiểm tra trường bắt buộc và dùng bộ phân tích chuẩn `HTMLParser`. Lỗi tạm thời retry theo cùng chính sách SQS. |
 | **Retry và SQS batch** | `services/ingestion/fetch_errors.py`, `services/ingestion/batch.py` | Phân loại lỗi tạm thời, backoff có giới hạn, tôn trọng `Retry-After`, partial batch failure và cập nhật job khi hết số lần thử. |
-| **SAM consumer** | `infra/aws/template.yaml` | Khai báo APIWorker/WebWorker, event source mappings, biến môi trường và IAM giới hạn theo queue. Cấu hình chưa được deploy lên AWS thật. |
+| **SAM consumer** | `infra/aws/template.yaml` | APIWorker/WebWorker, event source mappings, biến môi trường và IAM giới hạn theo queue đã được triển khai; cấu hình đạt ở lần kiểm kê AWS, chưa xác nhận thu thập nguồn API/HTML thật qua UI. |
 | **Demo local** | `scripts/demo_ingestion.py` | Chạy API/Web worker hai lần trên fixture, gửi qua Normalizer và xác nhận idempotency cùng cách ly tenant bằng Moto. |
 | **Dữ liệu mẫu (Fixtures)** | `tests/fixtures/api_response.json`<br>`tests/fixtures/sample_page.html` | Cung cấp dữ liệu mẫu chuẩn cho phản hồi REST API đối tác và trang bảng giá HTML tĩnh của đối thủ. |
 | **Kiểm thử tích hợp & lỗi** | `tests/test_api_web_workers.py`, `tests/test_sam.py` | Kiểm tra API/Web → Normalizer, retry/backoff, giới hạn lần thử, header HTML, tenant/payload và queue mapping/IAM. |

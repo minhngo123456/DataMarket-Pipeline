@@ -1,10 +1,5 @@
-import {
-  BellOutlined,
-  MenuOutlined,
-  SearchOutlined,
-  ShopOutlined,
-} from '@ant-design/icons';
-import { Avatar, Badge, Button, Drawer, Dropdown, Input, Layout, Tag, Tooltip } from 'antd';
+import { MenuOutlined, ShopOutlined } from '@ant-design/icons';
+import { Avatar, Button, Drawer, Dropdown, Layout, Tag } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar.jsx';
@@ -53,7 +48,6 @@ export function WorkspaceLayout({ user, cognitoUser, signOut, children }) {
         {!collapsed && <div className="tenant-copy"><small>KHÔNG GIAN LÀM VIỆC</small><strong title={tenantName}>{tenantName}</strong></div>}
       </div>
       <Sidebar role={role} onNavigate={() => setMobileOpen(false)} />
-      {!collapsed && <div className="sidebar-bottom"><span className="sidebar-status-dot" /> Hệ thống hoạt động</div>}
     </>
   );
 
@@ -83,8 +77,6 @@ export function WorkspaceLayout({ user, cognitoUser, signOut, children }) {
             <div className="header-heading"><span>WORKSPACE</span><strong>{pageTitle}</strong></div>
           </div>
           <div className="header-actions">
-            <Input className="global-search" prefix={<SearchOutlined />} placeholder="Tìm kiếm sản phẩm, báo cáo…" aria-label="Tìm kiếm" />
-            <Tooltip title="Thông báo"><Button className="notification-button" type="text" icon={<Badge dot><BellOutlined /></Badge>} aria-label="Thông báo" /></Tooltip>
             <Dropdown menu={{ items: accountItems, onClick: ({ key }) => key === 'signout' && signOut?.() }} trigger={['click']}>
               <button className="profile-trigger" type="button">
                 <Avatar className="profile-avatar">{initials(email)}</Avatar>
