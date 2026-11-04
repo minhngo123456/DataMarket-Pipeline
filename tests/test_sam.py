@@ -36,7 +36,7 @@ def test_sam_generates_consumers_and_queue_scoped_permissions():
     ]:
         role = resources[name + "ExecutionRole"]["Properties"]
         statements = [s for p in role["Policies"] for s in p["PolicyDocument"]["Statement"]]
-        polls = [s for s in statements if "sqs:ReceiveMessage" in s["Action"]]
+        polls = [s for s in statements if "sqs:ReceiveMessage" in s.get("Action", [])]
         assert len(polls) == 1
         assert polls[0]["Resource"] == {"Fn::GetAtt": [queue, "Arn"]}
         if name in ("APIWorker", "WebWorker"):
@@ -89,6 +89,8 @@ def test_notification_errors_raise_an_alarm():
     assert properties["Threshold"] == 1
     assert properties["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
     assert properties["TreatMissingData"] == "notBreaching"
+    assert properties["AlarmName"] == {"Fn::Sub": "${AWS::StackName}-NotificationFunctionErrorsAlarm"}
+    assert properties["AlarmActions"] == properties["OKActions"] == [{"Ref": "AlarmTopic"}]
 
 
 def test_aggregator_invokes_notification_lambda():
@@ -139,12 +141,20 @@ def role_statements(resources, role):
     return [s for p in resources[role]["Properties"]["Policies"] for s in p["PolicyDocument"]["Statement"]]
 
 
-def test_sns_publish_is_scoped_to_notification_topic():
+def test_only_notification_function_can_publish_tenant_reports():
     resources = translate()["Resources"]
-    for role in ("ReportAggregatorExecutionRole", "NotificationFunctionRole"):
-        publishes = [s for s in role_statements(resources, role) if "sns:Publish" in s["Action"]]
-        assert len(publishes) == 1
-        assert publishes[0]["Resource"] == {"Ref": "NotificationTopic"}
+    aggregator = role_statements(resources, "ReportAggregatorExecutionRole")
+    assert not any("sns:Publish" in s["Action"] or "kms:Decrypt" in s["Action"] for s in aggregator)
+    notification = role_statements(resources, "NotificationFunctionRole")
+    publishes = [s for s in notification if "sns:Publish" in s["Action"]]
+    assert len(publishes) == 1
+    assert publishes[0]["Resource"] == {
+        "Fn::Sub": "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-tenant-*"
+    }
+    env = resources["NotificationFunction"]["Properties"]["Environment"]["Variables"]
+    assert env["NOTIFICATION_STACK_NAME"] == {"Ref": "AWS::StackName"}
+    assert env["AWS_ACCOUNT_ID"] == {"Ref": "AWS::AccountId"}
+    assert "SNS_TOPIC_ARN" not in env
 
 
 def test_secret_access_is_scoped_and_conditional():
@@ -157,5 +167,12 @@ def test_secret_access_is_scoped_and_conditional():
     statements = policy["Properties"]["PolicyDocument"]["Statement"]
     assert len(statements) == 1
     assert statements[0]["Action"] == ["secretsmanager:GetSecretValue"]
-    assert statements[0]["Resource"]["Fn::Sub"].endswith(":secret:${AnthropicSecretName}-??????")
-    assert template["Conditions"]["HasAnthropicSecret"] == {"Fn::Not": [{"Fn::Equals": [{"Ref": "AnthropicSecretName"}, ""]}]}
+    assert statements[0]["Resource"] == {"Ref": "AnthropicSecretArn"}
+    assert statements[0]["Condition"]["StringEquals"]["aws:ResourceAccount"] == {"Ref": "AWS::AccountId"}
+    assert template["Conditions"]["HasAnthropicSecret"] == {"Fn::Not": [{"Fn::Equals": [{"Ref": "AnthropicSecretArn"}, ""]}]}
+    notification_secrets = [s for s in role_statements(resources, "NotificationFunctionRole")
+                            if "secretsmanager:GetSecretValue" in s["Action"]]
+    assert len(notification_secrets) == 1
+    assert notification_secrets[0]["Resource"]["Fn::Sub"].endswith(
+        ":secret:${AWS::StackName}/tenants/*/slack-*"
+    )
