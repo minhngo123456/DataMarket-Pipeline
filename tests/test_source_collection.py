@@ -549,6 +549,7 @@ def test_csv_transient_failure_changes_only_bound_version_and_fails_at_fifth_rec
     for count in range(1, 6):
         messages = sqs.receive_message(
             QueueUrl=input_queue, MaxNumberOfMessages=1, VisibilityTimeout=0,
+            WaitTimeSeconds=2,
             MessageSystemAttributeNames=["ApproximateReceiveCount"],
         ).get("Messages", [])
         assert len(messages) == 1
