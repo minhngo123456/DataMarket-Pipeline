@@ -15,7 +15,9 @@ CSV/API/Web worker ghi trạng thái vào `SOURCE#<source_id>` và mốc xử l�
 | `last_success_job_id`, `last_success_job_at` | Job thành công tương ứng và thời điểm logic của job đó. |
 | `last_error_code` | Mã lỗi an toàn của trạng thái retry/failed; được bỏ khi bắt đầu xử lý lại hoặc thành công. Không chứa URL, header hoặc nội dung exception tùy ý. |
 
-Các trường `collection_job_key`, `collection_job_at`, `collection_success_key` dùng nội bộ để so thứ tự, không cần trả ra UI. Trên JOB, `collection_job_at`, `collection_started_at`, `collection_succeeded_at` chỉ được đặt lần đầu, không thay đổi do nhận lại message.
+`GET /sources` đã được chuẩn bị trong code local để trả bảy trường công khai trong bảng khi có giá trị. Trường chưa có hoặc có giá trị null được bỏ khỏi response; client không được suy ra nguồn lỗi hay thành công khi chưa có `collection_status`.
+
+Các trường `collection_job_key`, `collection_job_at`, `collection_success_key` dùng nội bộ để so thứ tự và không được trả qua API nguồn. `source_config_revision` cũng là trường nội bộ, do server sinh bằng UUID để kiểm soát cập nhật cấu hình đồng thời, không trả ra response hoặc nhận giá trị từ client. Trên JOB, `collection_job_at`, `collection_started_at`, `collection_succeeded_at` chỉ được đặt lần đầu, không thay đổi do nhận lại message.
 
 ## Retry, thứ tự và tenant
 
@@ -29,18 +31,31 @@ Các trường `collection_job_key`, `collection_job_at`, `collection_success_ke
 
 ## Bàn giao cho API và UI
 
-Phần worker và repository đã ghi dữ liệu, còn API/UI cần tích hợp theo hợp đồng này:
+Phần worker, repository và API nguồn đã được chuẩn bị local theo hợp đồng sau; chưa xác nhận tích hợp UI hoặc kiểm thử AWS thật:
 
-- Hiếu: bổ sung các trường công khai trên vào `GET /sources` theo tenant/RBAC hiện có; client không được tự ghi các trường health. `POST /sources` hiện có thể ghi đè source có cùng ID và `PATCH` đang đọc rồi put toàn bản ghi: cần chuyển sang cập nhật có chọn lọc các trường cấu hình để không xóa/ghi đè health khi worker đang chạy. Kiểm tra riêng cả cập nhật đồng thời và thay kind/xóa rồi tạo lại nguồn.
+- `GET /sources` trả cấu hình và các trường health công khai theo tenant/RBAC hiện có. Giá trị header chỉ trả nguyên văn cho Admin; Analyst/Viewer nhận `***`. Các response nguồn không trả revision hay trường health nội bộ.
+- `POST /sources` tạo nguồn mới hoặc thay các trường cấu hình được hỗ trợ của nguồn cùng ID/cùng kind, giữ nguyên health do worker ghi. POST vẫn trả 201 khi cập nhật nguồn cùng kind. Nếu không cung cấp URL qua `endpoint`/`url`, cả hai trường được xóa; `headers` bị xóa nếu thiếu hoặc null. `name` mặc định là source ID, `enabled` mặc định true. Muốn chỉ sửa một phần, dùng PATCH.
+- POST đổi kind của nguồn đã tồn tại trả HTTP 409, `error.code="conflict"`, `error.message="source_kind_conflict"`; không tự chuyển loại nguồn hoặc xóa lịch sử.
+- `PATCH /sources/:id` chỉ cập nhật cấu hình được hỗ trợ, giữ health và các trường cấu hình không được gửi; `headers:null` xóa cấu hình header. POST/PATCH giữ giá trị header đã lưu nếu client gửi lại `***` cho tên header đó; tên chưa có giá trị đã lưu được bỏ qua.
+- POST/PATCH dùng `UpdateItem` và revision UUID nội bộ, không put lại toàn bản ghi SOURCE. Một request cấu hình đã đọc dữ liệu cũ không được tạo lại nguồn vừa bị xóa hoặc ghi đè cấu hình vừa thay đổi/tạo lại. Xung đột trả HTTP 409, `error.code="conflict"`, `error.message="source_configuration_changed"`; client tải lại `GET /sources`, đối chiếu cấu hình rồi thực hiện lại thay đổi phù hợp. Worker ghi health không làm đổi config revision.
+- Client không được ghi health, trường nội bộ hoặc chọn tenant bằng body; các trường này không được lấy từ payload cấu hình.
+- Hiếu: review và tích hợp contract API nguồn vào bản dùng chung, xác nhận cách xử lý 409 và chạy các ca cập nhật đồng thời. Contract chi tiết ở [API dành cho frontend](api-contract-frontend.md).
 - Minh: hiển thị trạng thái nguồn, lần chạy/thành công gần nhất và mã lỗi; dùng job để xem số accepted/pending/rejected. Trường chưa có hiển thị “Chưa thu thập”, không suy ra lỗi hay thành công.
 - Hoàng: đối chiếu quyền ControlTable và kiểm thử delivery/retry/DLQ trên AWS khi đã đủ điều kiện chi phí và triển khai trong [checklist AWS](huong-aws-readiness.md).
 
-Không coi phần hiển thị nguồn đã hoàn tất trước khi API/UI tích hợp. Không công khai cấu hình header hoặc secret để giải thích mã lỗi.
+Không coi phần hiển thị nguồn đã hoàn tất trước khi UI tích hợp và được kiểm chứng. Không công khai cấu hình header hoặc secret để giải thích mã lỗi.
+
+## Giới hạn hiện tại
+
+- Config revision chỉ bảo vệ thao tác cấu hình POST/PATCH; chưa thay thế định danh vòng đời nguồn. Job cũ vẫn có thể tác động health của nguồn đã bị xóa rồi tạo lại cùng source ID/cùng kind, vì job và worker chưa gắn với một source generation riêng. Đây là hạng mục lifecycle cần xử lý riêng.
+- DELETE vẫn đọc rồi xóa mà chưa kiểm tra revision khi xóa; request DELETE cũ có thể xóa nguồn đã được thay đổi hoặc tạo lại sau lần đọc đó. Chưa được coi giới hạn này là đã khắc phục bằng revision của POST/PATCH.
+- Snapshot chỉ cố định sau khi đã capture/lưu dữ liệu. Retry của job đã có snapshot dùng lại dữ liệu đó dù URL/header cấu hình thay đổi; job chưa có snapshot có thể dùng cấu hình mới khi fetch. Không khẳng định mọi job đã queued trước PATCH đều dùng cấu hình cũ.
+- Code và kiểm thử Moto/local không chứng minh IAM, JWT thật, cơ chế vận chuyển AWS hoặc UI đã hoạt động trên môi trường triển khai.
 
 ## Kiểm tra local
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests/test_source_collection.py -q
+.venv\Scripts\python.exe -m pytest tests/test_source_collection.py tests/test_source_health_api.py -q
 ```
 
-Bộ kiểm thử dùng Moto/fixtures; bao phủ enqueue success trước Normalizer, retry/partial send, lịch sử thành công, job cũ, delivery muộn, tenant và ràng buộc upload CSV. Tiếp tục áp dụng [điều kiện sử dụng AWS](huong-aws-readiness.md) và bảo vệ credential theo [SECURITY.md](../SECURITY.md).
+Bộ kiểm thử dùng Moto/fixtures; có các ca enqueue success trước Normalizer, retry/partial send, lịch sử thành công, job cũ, delivery muộn, tenant và ràng buộc upload CSV. Các ca API nguồn kiểm tra health công khai, giữ health khi cấu hình thay đổi đồng thời, revision/conflict, client giả mạo trường dữ liệu và masking header. Không dùng các ca này để khẳng định đã khắc phục những giới hạn lifecycle nêu trên. Tiếp tục áp dụng [điều kiện sử dụng AWS](huong-aws-readiness.md) và bảo vệ credential theo [SECURITY.md](../SECURITY.md).
