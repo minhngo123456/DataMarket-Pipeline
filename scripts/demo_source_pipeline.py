@@ -156,6 +156,12 @@ class _LocalPipeline:
         return self.sqs.receive_message(
             QueueUrl=self.queues[kind], MaxNumberOfMessages=max_messages,
             MessageSystemAttributeNames=["ApproximateReceiveCount"],
+            # Moto's visibility clock can still equal the timestamp set by
+            # release_retries() on Windows. A bounded long poll lets that clock
+            # advance while retaining the same message and receive counter.
+            # Keep it above Moto's one-second internal wait so the timeout does
+            # not expire before it checks the newly visible message again.
+            WaitTimeSeconds=2 if self._failed.get(kind) else 0,
         ).get("Messages", [])
 
     def run_sources(self, kind, fetcher=None, output_sqs=None, max_messages=10):
