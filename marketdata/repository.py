@@ -15,6 +15,7 @@ from marketdata.contracts import (
     Conflict,
     InvalidRecord,
     QuotaExceeded,
+    SourceGenerationChanged,
     identifier,
     iso,
     stable_id,
@@ -30,6 +31,13 @@ def pk(tenant_id):
 def serialized(item):
     codec = TypeSerializer()
     return {k: codec.serialize(v) for k, v in item.items()}
+
+
+def generation_condition(generation):
+    """Missing generation identifies legacy records, never a new source's generation."""
+    if generation is None:
+        return "attribute_not_exists(source_generation)", {}
+    return "source_generation = :generation", {":generation": identifier(generation)}
 
 
 class DynamoStore:
@@ -50,6 +58,59 @@ class DynamoStore:
         # Internal configuration/seed operation, never expose this directly as an API.
         self.control.put_item(Item={**item, "pk": pk(tenant_id), "sk": key})
 
+    def _change_source_catalog(self, tenant_id, source_id, action, *, creating=False):
+        """Serialize source creation/deletion with the tenant quota snapshot.
+
+        Count existing sources instead of relying on a counter that legacy seeds
+        never maintained. Every API create/delete changes the catalog revision
+        in the same transaction, invalidating a concurrent quota read.
+        """
+        for _attempt in range(8):
+            tenant = self.tenant(tenant_id)
+            if creating:
+                if self.get(tenant_id, "SOURCE#" + source_id):
+                    raise Conflict("source_configuration_changed")
+                quota = min(int(tenant.get("max_sources", 3)), 3)
+                if sum(1 for _ in self.sources(tenant_id)) >= quota:
+                    if self.get(tenant_id, "SOURCE#" + source_id):
+                        raise Conflict("source_configuration_changed")
+                    raise QuotaExceeded("source_limit_reached")
+            values = {":active": "active", ":next_revision": uuid4().hex}
+            condition = "attribute_exists(pk) AND #status = :active AND "
+            if "source_catalog_revision" in tenant:
+                condition += "source_catalog_revision = :previous_revision"
+                values[":previous_revision"] = tenant["source_catalog_revision"]
+            else:
+                condition += "attribute_not_exists(source_catalog_revision)"
+            if "max_sources" in tenant:
+                condition += " AND max_sources = :quota"
+                values[":quota"] = tenant["max_sources"]
+            else:
+                condition += " AND attribute_not_exists(max_sources)"
+            try:
+                self.client.transact_write_items(TransactItems=[
+                    {"Update": {
+                        "TableName": self.control_name,
+                        "Key": serialized({"pk": pk(tenant_id), "sk": "META"}),
+                        "UpdateExpression": "SET source_catalog_revision = :next_revision",
+                        "ConditionExpression": condition,
+                        "ExpressionAttributeNames": {"#status": "status"},
+                        "ExpressionAttributeValues": serialized(values),
+                    }},
+                    action,
+                ])
+                return
+            except self.client.exceptions.TransactionCanceledException as exc:
+                reasons = exc.response.get("CancellationReasons", [])
+                if len(reasons) > 1 and reasons[1].get("Code") == "ConditionalCheckFailed":
+                    raise Conflict("source_configuration_changed") from None
+                codes = {reason.get("Code") for reason in reasons}
+                if not codes.intersection({"ConditionalCheckFailed", "TransactionConflict"}):
+                    raise
+                # Another source changed the tenant's catalog/quota. Recount
+                # before retrying, while keeping this request's source condition.
+        raise Conflict("source_configuration_changed")
+
     def update_source_configuration(self, tenant_id, source_id, fields, *, previous):
         """Update only API-owned configuration, preserving concurrent worker health.
 
@@ -68,6 +129,11 @@ class DynamoStore:
         names = {"#revision": "source_config_revision"}
         values = {":revision": uuid4().hex}
         sets = ["#revision = :revision"]
+        if previous is None:
+            # Only a new source gets a new lifetime identity. Legacy sources stay
+            # legacy until deletion so their already queued jobs remain valid.
+            sets.append("source_generation = :generation")
+            values[":generation"] = uuid4().hex
         removes = []
         for index, (name, value) in enumerate(fields.items()):
             key, parameter = f"#f{index}", f":v{index}"
@@ -88,9 +154,24 @@ class DynamoStore:
             else:
                 # Legacy sources get a revision on their first configuration edit.
                 condition += "attribute_not_exists(#revision)"
+            generation_guard, generation_values = generation_condition(
+                previous.get("source_generation")
+            )
+            condition += " AND " + generation_guard
+            values.update(generation_values)
         update = "SET " + ", ".join(sets)
         if removes:
             update += " REMOVE " + ", ".join(removes)
+        if previous is None:
+            self._change_source_catalog(tenant_id, source_id, {"Update": {
+                "TableName": self.control_name,
+                "Key": serialized({"pk": pk(tenant_id), "sk": "SOURCE#" + source_id}),
+                "UpdateExpression": update,
+                "ConditionExpression": condition,
+                "ExpressionAttributeNames": names,
+                "ExpressionAttributeValues": serialized(values),
+            }}, creating=True)
+            return self.get(tenant_id, "SOURCE#" + source_id)
         try:
             return self.control.update_item(
                 Key={"pk": pk(tenant_id), "sk": "SOURCE#" + source_id},
@@ -100,6 +181,28 @@ class DynamoStore:
             )["Attributes"]
         except self.control.meta.client.exceptions.ConditionalCheckFailedException:
             raise Conflict("source_configuration_changed") from None
+
+    def delete_source_configuration(self, tenant_id, source_id, *, previous):
+        """Delete exactly the configuration read by this request, atomically."""
+        tenant_id, source_id = identifier(tenant_id), identifier(source_id)
+        self.tenant(tenant_id)
+        generation_guard, values = generation_condition(previous.get("source_generation"))
+        values[":kind"] = previous["kind"]
+        condition = "attribute_exists(pk) AND #kind = :kind AND " + generation_guard
+        names = {"#kind": "kind"}
+        if "source_config_revision" in previous:
+            condition += " AND #revision = :revision"
+            names["#revision"] = "source_config_revision"
+            values[":revision"] = previous["source_config_revision"]
+        else:
+            condition += " AND attribute_not_exists(source_config_revision)"
+        self._change_source_catalog(tenant_id, source_id, {"Delete": {
+            "TableName": self.control_name,
+            "Key": serialized({"pk": pk(tenant_id), "sk": "SOURCE#" + source_id}),
+            "ConditionExpression": condition,
+            "ExpressionAttributeNames": names,
+            "ExpressionAttributeValues": serialized(values),
+        }})
 
     @staticmethod
     def pages(table, **kwargs):
@@ -233,10 +336,27 @@ class DynamoStore:
             raise AccessDenied("source_unavailable")
         return result
 
+    @staticmethod
+    def source_job_matches(source, job):
+        return bool(
+            source and job
+            and source.get("kind") == job.get("kind")
+            and source.get("source_generation") == job.get("source_generation")
+        )
+
     def require_job(self, value):
         tenant = self.tenant(value["tenant_id"])
-        source = self.source(value["tenant_id"], value["source_id"])
+        source = self.get(value["tenant_id"], "SOURCE#" + identifier(value["source_id"]))
         job = self.get(value["tenant_id"], "JOB#" + identifier(value["job_id"]))
+        if (
+            source and job and job.get("source_id") == value["source_id"]
+            and source.get("source_generation") != job.get("source_generation")
+        ):
+            # An obsolete job stays obsolete even if its replacement is disabled
+            # or has another kind. Do not retry it against the replacement.
+            raise SourceGenerationChanged("source_generation_changed")
+        if not source or not source.get("enabled"):
+            raise AccessDenied("source_unavailable")
         if (
             not job
             or job.get("source_id") != value["source_id"]
@@ -320,17 +440,73 @@ class DynamoStore:
 
     def save_receipt(self, receipt):
         try:
-            self.control.put_item(
-                Item={
-                    **receipt,
-                    "pk": pk(receipt["tenant_id"]),
-                    "sk": "RECEIPT#" + receipt["observation_id"],
-                },
-                ConditionExpression="attribute_not_exists(pk)",
+            self.client.transact_write_items(
+                TransactItems=[
+                    self._source_write_check(receipt),
+                    {"Put": {
+                        "TableName": self.control_name,
+                        "Item": serialized({
+                            **receipt,
+                            "pk": pk(receipt["tenant_id"]),
+                            "sk": "RECEIPT#" + receipt["observation_id"],
+                        }),
+                        "ConditionExpression": "attribute_not_exists(pk)",
+                    }},
+                    self._job_receipts_revision_update(receipt),
+                ]
             )
             return True
-        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+        except self.client.exceptions.TransactionCanceledException as exc:
+            return self._receipt_write_cancelled(receipt, exc)
+
+    def _job_receipts_revision_update(self, receipt):
+        """Fence count snapshots with the same transaction that changes a receipt."""
+        generation_guard, values = generation_condition(receipt.get("source_generation"))
+        values.update({":source": identifier(receipt["source_id"]), ":one": 1})
+        return {"Update": {
+            "TableName": self.control_name,
+            "Key": serialized({
+                "pk": pk(receipt["tenant_id"]),
+                "sk": "JOB#" + identifier(receipt["job_id"]),
+            }),
+            "UpdateExpression": "ADD receipts_revision :one",
+            "ConditionExpression": "attribute_exists(pk) AND source_id = :source AND " + generation_guard,
+            "ExpressionAttributeValues": serialized(values),
+        }}
+
+    def _source_write_check(self, receipt):
+        generation_guard, values = generation_condition(receipt.get("source_generation"))
+        values[":enabled"] = True
+        return {"ConditionCheck": {
+            "TableName": self.control_name,
+            "Key": serialized({
+                "pk": pk(receipt["tenant_id"]),
+                "sk": "SOURCE#" + identifier(receipt["source_id"]),
+            }),
+            "ConditionExpression": "attribute_exists(pk) AND enabled = :enabled AND " + generation_guard,
+            "ExpressionAttributeValues": serialized(values),
+        }}
+
+    def _require_receipt_source(self, receipt):
+        source = self.get(receipt["tenant_id"], "SOURCE#" + identifier(receipt["source_id"]))
+        if not source or source.get("source_generation") != receipt.get("source_generation"):
+            raise SourceGenerationChanged("source_generation_changed")
+        if not source.get("enabled"):
+            raise AccessDenied("source_unavailable")
+        return source
+
+    def _receipt_write_cancelled(self, receipt, exc):
+        reasons = exc.response.get("CancellationReasons", [])
+        if reasons and reasons[0].get("Code") == "ConditionalCheckFailed":
+            # The first transaction action always guards source lifetime/enabled.
+            self._require_receipt_source(receipt)
+            # A source may have been disabled and re-enabled after cancellation.
+            # Its generation still matches, so retry rather than dropping a row.
+            raise exc
+        self._require_receipt_source(receipt)
+        if self.receipt(receipt["tenant_id"], receipt["observation_id"]):
             return False
+        raise exc
 
     @staticmethod
     def observation_item(receipt):
@@ -338,7 +514,7 @@ class DynamoStore:
         # Pending receipts saved before content_id existed fall back to their row id.
         observation_id = receipt.get("content_id") or receipt["observation_id"]
         return {
-            **{k: v for k, v in receipt.items() if k not in ("pk", "sk", "reason", "content_id")},
+            **{k: v for k, v in receipt.items() if k not in ("pk", "sk", "reason", "content_id", "source_generation")},
             "observation_id": observation_id,
             "pk": f"{pk(receipt['tenant_id'])}#P#{identifier(receipt['product_id'])}",
             "sk": f"{receipt['source_id']}#{receipt['observed_at']}#{observation_id}",
@@ -352,6 +528,7 @@ class DynamoStore:
         try:
             self.client.transact_write_items(
                 TransactItems=[
+                    self._source_write_check(receipt),
                     {
                         "Put": {
                             "TableName": self.control_name,
@@ -372,13 +549,12 @@ class DynamoStore:
                             "Item": serialized(self.observation_item(receipt)),
                         }
                     },
+                    self._job_receipts_revision_update(receipt),
                 ]
             )
             return True
-        except self.client.exceptions.TransactionCanceledException:
-            if self.receipt(receipt["tenant_id"], receipt["observation_id"]):
-                return False
-            raise
+        except self.client.exceptions.TransactionCanceledException as exc:
+            return self._receipt_write_cancelled(receipt, exc)
 
     def approve_pending(self, tenant_id, observation_id, product_id, now=None):
         self.product(tenant_id, product_id)
@@ -387,7 +563,7 @@ class DynamoStore:
             raise AccessDenied("pending_row_unavailable")
         if int(pending["expires_at"]) <= (now or datetime.now(UTC)).timestamp():
             raise Conflict("pending_row_expired")
-        self.source(tenant_id, pending["source_id"])
+        self._require_receipt_source(pending)
         if pending["status"] == "accepted" and pending["product_id"] == product_id:
             return
         if pending["status"] != "pending":
@@ -397,6 +573,7 @@ class DynamoStore:
         try:
             self.client.transact_write_items(
                 TransactItems=[
+                    self._source_write_check(pending),
                     {
                         "Put": {
                             "TableName": self.control_name,
@@ -430,6 +607,7 @@ class DynamoStore:
                             "ExpressionAttributeValues": serialized({":product": product_id}),
                         }
                     },
+                    self._job_receipts_revision_update(pending),
                 ]
             )
         except self.client.exceptions.TransactionCanceledException as exc:
@@ -444,18 +622,25 @@ class DynamoStore:
         if pending["status"] != "pending":
             raise Conflict("row_is_not_pending")
         try:
-            self.control.update_item(
-                Key={"pk": pk(tenant_id), "sk": "RECEIPT#" + identifier(observation_id)},
-                UpdateExpression="SET #status = :rejected, reviewed_at = :now",
-                ConditionExpression="#status = :pending",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={
-                    ":rejected": "rejected",
-                    ":pending": "pending",
-                    ":now": iso(now or datetime.now(UTC)),
-                },
+            self.client.transact_write_items(
+                TransactItems=[
+                    {"Update": {
+                        "TableName": self.control_name,
+                        "Key": serialized({
+                            "pk": pk(tenant_id), "sk": "RECEIPT#" + identifier(observation_id),
+                        }),
+                        "UpdateExpression": "SET #status = :rejected, reviewed_at = :now",
+                        "ConditionExpression": "#status = :pending",
+                        "ExpressionAttributeNames": {"#status": "status"},
+                        "ExpressionAttributeValues": serialized({
+                            ":rejected": "rejected", ":pending": "pending",
+                            ":now": iso(now or datetime.now(UTC)),
+                        }),
+                    }},
+                    self._job_receipts_revision_update(pending),
+                ]
             )
-        except self.control.meta.client.exceptions.ConditionalCheckFailedException as exc:
+        except self.client.exceptions.TransactionCanceledException as exc:
             raise Conflict("pending_row_changed") from exc
 
     def receipts(self, tenant_id, job_id=None, status=None):
@@ -499,15 +684,28 @@ class DynamoStore:
                     yield row
             day += timedelta(days=1)
 
-    def update_job(self, tenant_id, job_id, **fields):
+    def update_job(self, tenant_id, job_id, *, receipt_snapshot=None, **fields):
         names = {f"#f{i}": name for i, name in enumerate(fields)}
         values = {f":v{i}": value for i, value in enumerate(fields.values())}
+        condition = "attribute_exists(pk)"
+        if receipt_snapshot is not None:
+            # Receipt revisions cover inserts and reviews; state and row count
+            # also protect against cancellation/failure or extractor updates.
+            for index, name in enumerate(("receipts_revision", "status", "row_count")):
+                parameter = f"#expected{index}"
+                names[parameter] = name
+                if name in receipt_snapshot:
+                    value = f":expected{index}"
+                    values[value] = receipt_snapshot[name]
+                    condition += f" AND {parameter} = {value}"
+                else:
+                    condition += f" AND attribute_not_exists({parameter})"
         self.control.update_item(
             Key={"pk": pk(tenant_id), "sk": "JOB#" + identifier(job_id)},
             UpdateExpression="SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(fields))),
             ExpressionAttributeNames=names,
             ExpressionAttributeValues=values,
-            ConditionExpression="attribute_exists(pk)",
+            ConditionExpression=condition,
         )
 
     def bind_csv_version(self, tenant_id, job_id, version):
@@ -624,15 +822,28 @@ class DynamoStore:
             return False
 
     def refresh_job(self, tenant_id, job_id):
-        # Count durable receipts rather than incrementing a counter on retries.
-        rows = self.receipts(tenant_id, job_id=job_id)
-        job = self.get(tenant_id, "JOB#" + identifier(job_id))
-        counts = {
-            s: sum(r["status"] == s for r in rows) for s in ("accepted", "pending", "rejected")
-        }
-        status = "completed" if len(rows) == job.get("row_count") else "normalizing"
-        self.update_job(tenant_id, job_id, status=status, counts=counts)
-        return counts
+        # Read the job before its receipts. Every receipt mutation bumps the
+        # revision atomically, so an older count snapshot cannot commit later.
+        job_id = identifier(job_id)
+        for _attempt in range(8):
+            job = self.get(tenant_id, "JOB#" + job_id)
+            if not job:
+                raise AccessDenied("job_unavailable")
+            rows = self.receipts(tenant_id, job_id=job_id)
+            counts = {
+                s: sum(r["status"] == s for r in rows) for s in ("accepted", "pending", "rejected")
+            }
+            status = job.get("status")
+            if status in ("queued", "extracting", "normalizing"):
+                status = "completed" if len(rows) == job.get("row_count") else "normalizing"
+            try:
+                self.update_job(
+                    tenant_id, job_id, receipt_snapshot=job, status=status, counts=counts,
+                )
+                return counts
+            except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+                continue
+        raise Conflict("job_counts_changed")
 
     def record_source_collection(
         self, tenant_id, source_id, job_id, kind, status, error_code=None, now=None
@@ -664,6 +875,7 @@ class DynamoStore:
             not source or source.get("kind") != kind or not source.get("enabled")
             or not job or job.get("source_id") != source_id or job.get("kind") != kind
             or job.get("status") not in allowed_states
+            or not self.source_job_matches(source, job)
         ):
             return False
         at = iso(now or datetime.now(UTC))
@@ -700,6 +912,8 @@ class DynamoStore:
             ":attempt": job["collection_started_at"], ":status": status,
             ":success": "succeeded",
         }
+        generation_guard, generation_values = generation_condition(job.get("source_generation"))
+        values.update(generation_values)
         same_job_guard = "collection_status <> :success"
         if status in ("running", "retrying"):
             same_job_guard += " AND collection_status <> :failed"
@@ -720,6 +934,7 @@ class DynamoStore:
                 UpdateExpression=update,
                 ConditionExpression=(
                     "attribute_exists(pk) AND kind = :kind AND enabled = :enabled AND "
+                    f"{generation_guard} AND "
                     "(attribute_not_exists(collection_job_key) OR collection_job_key < :run OR "
                     f"(collection_job_key = :run AND last_job_id = :job AND ({same_job_guard})))"
                 ),
@@ -740,6 +955,7 @@ class DynamoStore:
                     ),
                     ConditionExpression=(
                         "attribute_exists(pk) AND kind = :kind AND enabled = :enabled "
+                        f"AND {generation_guard} "
                         "AND (attribute_not_exists(collection_success_key) OR collection_success_key < :run) "
                         "AND (attribute_not_exists(last_success_at) OR last_success_at <= :success_at)"
                     ),
@@ -750,6 +966,7 @@ class DynamoStore:
                         # history write won while this write was being retried.
                         ":success_at": at,
                         ":job": job_id, ":job_at": job["collection_job_at"],
+                        **generation_values,
                     },
                 )
                 changed = True
@@ -779,6 +996,17 @@ class DynamoStore:
         )
 
     def create_job(self, tenant_id, job_id, fields):
+        fields = dict(fields)
+        if fields.get("kind") in ("csv", "api", "web"):
+            if "source_generation" not in fields:
+                # Convenience for internal seed/test callers. Production callers
+                # pass the generation read with their source, including legacy None.
+                source = self.get(tenant_id, "SOURCE#" + identifier(fields["source_id"]))
+                fields["source_generation"] = (source or {}).get("source_generation")
+            if fields["source_generation"] is None:
+                fields.pop("source_generation")
+            else:
+                identifier(fields["source_generation"])
         try:
             self.control.put_item(
                 Item={

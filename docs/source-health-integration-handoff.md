@@ -8,7 +8,7 @@ Dùng Python 3.12 và dependencies trong `requirements-dev.lock.txt`. Môi trư�
 
 ```powershell
 build\venv312\Scripts\python.exe -m scripts.demo_source_health --output build/evidence/source-health-api-20261105/api-examples.json
-build\venv312\Scripts\python.exe -m pytest tests/test_source_health_api.py tests/test_source_collection.py tests/test_source_pipeline.py tests/test_api.py -q
+build\venv312\Scripts\python.exe -m pytest tests/test_source_health_api.py tests/test_source_collection.py tests/test_source_pipeline.py tests/test_source_lifecycle.py tests/test_source_delete_concurrency.py tests/test_api.py -q
 ```
 
 Demo dùng Moto và fixture, chặn kết nối mạng trong pipeline, tự thay credential bằng giá trị giả. Không cần đăng nhập AWS. URL `.example.invalid` trong ví dụ chỉ là địa chỉ giả. Không dùng chúng làm nguồn thật.
@@ -34,16 +34,18 @@ File JSON có phản hồi thực của handler `GET /sources` theo vai trò Vie
 
 `succeeded` chưa chứng minh dữ liệu đã được Normalizer chấp nhận. Với Admin/Analyst, đối chiếu `GET /jobs/{last_job_id}/status`: `status`, `row_count`, `counts.accepted/pending/rejected`, sau đó đối chiếu `/matrix`. Viewer đọc health nguồn được nhưng không có quyền đọc endpoint job hiện tại; không gọi endpoint đó bằng Viewer.
 
-Sau POST/PATCH, đọc lại `GET /sources` để nhận health; response ghi cấu hình vẫn giữ định dạng cũ. Không gửi health, tenant hoặc revision từ UI. Header vẫn theo quyền hiện có: Analyst/Viewer nhận `***`; không đưa secret thật vào fixture, ảnh chụp hoặc log chia sẻ.
+Sau POST/PATCH, đọc lại `GET /sources` để nhận health; response ghi cấu hình vẫn giữ định dạng cũ. Không gửi health, tenant, generation hoặc revision từ UI. Header vẫn theo quyền hiện có: Analyst/Viewer nhận `***`; không đưa secret thật vào fixture, ảnh chụp hoặc log chia sẻ.
 
 ## Hiếu review điểm nào
 
-- GET chỉ thêm bảy trường health công khai đã có giá trị; không trả khóa DynamoDB, khóa thứ tự worker hoặc `source_config_revision`.
+- GET chỉ thêm bảy trường health công khai đã có giá trị; không trả khóa DynamoDB, khóa thứ tự worker, `source_generation` hoặc `source_config_revision`.
 - POST cùng ID/kind vẫn trả 201 và thay cấu hình hỗ trợ; endpoint/url/headers bị bỏ khỏi payload POST sẽ bị xóa khỏi cấu hình. Dùng PATCH để sửa từng phần. Cả hai giữ nguyên health, kể cả worker cập nhật sau lúc API đọc nguồn.
 - POST đổi kind của ID đang tồn tại trả 409, `error.code=conflict`, `error.message=source_kind_conflict`. PATCH không hỗ trợ đổi kind. Không hướng dẫn xóa/tạo lại nguồn đang có job dở để lách lỗi này.
-- Nếu cấu hình thay đổi, bị xóa hoặc thay thế trong lúc request POST/PATCH đang xử lý: 409, `error.code=conflict`, `error.message=source_configuration_changed`. UI tải lại danh sách để người dùng xem và gửi lại ý định sửa; không tự lặp vô hạn request cũ.
+- Nếu cấu hình thay đổi, bị xóa hoặc thay thế trong lúc request POST/PATCH/DELETE đang xử lý: 409, `error.code=conflict`, `error.message=source_configuration_changed`. DELETE kiểm tra generation và revision cùng thao tác xóa; worker chỉ ghi health không gây conflict. UI tải lại danh sách để người dùng xem và gửi lại ý định sửa/xóa; không tự lặp vô hạn request cũ. Nguồn chưa tồn tại khi DELETE đọc trả 404 `source_not_found`.
 - Revision do server sinh, không yêu cầu UI gửi. Nó bảo vệ thời gian từ lúc server đọc đến lúc ghi, chưa phát hiện một form đã cũ từ trước khi request đến server.
-- Giữ quota, tenant/RBAC, masking header và khôi phục `***` như hiện tại. Không có tài nguyên, biến môi trường hay quyền IAM mới.
+- Generation UUID do server sinh khi tạo nguồn mới, giữ nguyên khi POST/PATCH nguồn hiện có. Xóa/tạo lại cùng ID nhận generation mới; job cũ không được fetch, ghi health hoặc thêm dữ liệu vào nguồn mới. Nguồn/job legacy cùng thiếu generation tiếp tục chạy khi nguồn legacy còn tồn tại; job legacy không được tự nhận generation của nguồn tạo lại.
+- Dispatcher đưa generation vào job ID của nguồn mới, kể cả khi tạo lại trong cùng kỳ lịch. Normalizer kiểm tra generation cùng transaction ghi dữ liệu; message Transform thuộc generation cũ được ACK mà không ghi thêm. Mapping theo source ID và lịch sử đã lưu vẫn giữ; pending receipt của nguồn cũ không được duyệt vào nguồn tạo lại. Schema envelope Transform và snapshot không đổi.
+- Giữ quota, tenant/RBAC, masking header và khôi phục `***` như hiện tại. Không thêm tài nguyên hoặc biến môi trường; quyền worker giữ nguyên. Normalizer được bổ sung `dynamodb:ConditionCheckItem` chỉ trên ControlTable cho kiểm tra generation trong transaction; API đã có quyền này.
 
 ## Việc còn lại để nghiệm thu phần của Hướng
 
@@ -51,4 +53,4 @@ Sau POST/PATCH, đọc lại `GET /sources` để nhận health; response ghi c�
 2. Hướng cùng Minh kiểm tra UI bằng ví dụ local: dữ liệu nguồn, lịch sử thành công sau retry/lỗi và job/ma trận tương ứng.
 3. Nhận kết quả Hoàng chạy AWS trong phạm vi chi phí được xác nhận/chấp thuận: job ID, counts, số dòng ma trận, log lỗi đã che thông tin nhạy cảm. Đối chiếu bộ `expected-results.json` đã gửi Hoàng và [checklist AWS của Hướng](huong-aws-readiness.md).
 
-Giới hạn cần Hiếu/Hoàng review riêng: revision cấu hình chưa xử lý job cũ ghi vào nguồn đã xóa/tạo lại cùng ID/kind, và DELETE hiện chưa chặn request xóa dùng bản đọc cũ. Nguồn có job dở không được coi là đã an toàn để xóa/tạo lại. Snapshot cố định sau khi capture; job chưa có snapshot có thể đọc cấu hình mới. Retry dùng snapshot đã gắn với job vẫn phải giữ dữ liệu cũ. Các giới hạn này được mô tả trong [hợp đồng trạng thái nguồn](source-collection-status.md).
+Hiếu/Hoàng cần review các ca hồi quy generation và DELETE trên bản tích hợp; đây là thay đổi code/local, chưa phải nghiệm thu UI hoặc AWS. Trong cùng generation, snapshot cố định sau khi capture; job chưa có snapshot có thể đọc cấu hình mới. Retry dùng snapshot đã gắn với job vẫn giữ dữ liệu cũ, còn job khác generation bị chặn sau khi xóa/tạo lại nguồn. Hợp đồng vòng đời nguồn, tương thích legacy và giới hạn form cũ được mô tả trong [hợp đồng trạng thái nguồn](source-collection-status.md).

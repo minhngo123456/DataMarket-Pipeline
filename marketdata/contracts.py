@@ -17,6 +17,10 @@ class AccessDenied(ValueError):
     pass
 
 
+class SourceGenerationChanged(AccessDenied):
+    """An obsolete job must never operate on a replacement source."""
+
+
 class QuotaExceeded(ValueError):
     pass
 

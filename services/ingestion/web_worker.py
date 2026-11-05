@@ -356,11 +356,14 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     if job.get("source_id") != source_id or job.get("kind") != "web":
         raise AccessDenied("web_job_required")
     store.tenant(tenant_id)
+    source = store.get(tenant_id, "SOURCE#" + source_id)
+    if source and source.get("kind") == "web" and not store.source_job_matches(source, job):
+        store.fail_source_job(tenant_id, job_id, source_id, "web", "source_generation_changed")
+        return
     if job.get("status") == "completed":
         store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
         return
 
-    source = store.get(tenant_id, "SOURCE#" + source_id)
     if not source or source.get("kind") != "web" or not source.get("enabled"):
         store.tenant(tenant_id)
         store.fail_source_job(tenant_id, job_id, source_id, "web", "source_disabled_or_missing")
@@ -375,10 +378,15 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     store.record_source_collection(tenant_id, source_id, job_id, "web", "running")
 
     def load_rows():
-        url = source.get("url") or source.get("endpoint")
+        # Resolve the job's source generation again before the first capture;
+        # an old delivery must never fetch a replacement source's configuration.
+        _, current_source, _ = store.require_job(
+            {"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id}
+        )
+        url = current_source.get("url") or current_source.get("endpoint")
         if not url:
             raise InvalidRecord("missing_web_url")
-        raw_data = fetch(url, headers=source.get("headers"))
+        raw_data = fetch(url, headers=current_source.get("headers"))
         # Source timestamps take precedence. Missing times use the job schedule
         # (or UTC now) once, then remain immutable in the persisted snapshot.
         return parse_html_payload(
@@ -401,6 +409,11 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     if committed_job["status"] == "completed":
         store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
         return
+    current_source = store.get(tenant_id, "SOURCE#" + source_id)
+    if current_source and not store.source_job_matches(current_source, committed_job):
+        store.fail_source_job(tenant_id, job_id, source_id, "web", "source_generation_changed")
+        return
+    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
     send_rows(sqs, transform_queue, snapshot.values)
     store.record_source_collection(tenant_id, source_id, job_id, "web", "succeeded")
 
