@@ -34,7 +34,11 @@ def dispatch(event, store, sqs, queues):
             sources = [s for s in enabled if s["kind"] in ("api", "web")]
         for source in sources:
             source_id = source.get("source_id") or source["sk"].removeprefix("SOURCE#")
-            job_id = stable_id(tenant_id, source_id, period)
+            generation = source.get("source_generation")
+            job_id = (
+                stable_id(tenant_id, source_id, generation, period)
+                if generation is not None else stable_id(tenant_id, source_id, period)
+            )
             body = {
                 "schema_version": 1,
                 "tenant_id": tenant_id,
@@ -49,6 +53,12 @@ def dispatch(event, store, sqs, queues):
                 "row_count": 0,
                 "expires_at": int((scheduled + timedelta(days=30)).timestamp()),
             }
+            if mode == "sources":
+                # Capture even the legacy absence explicitly: create_job must
+                # not rebind this stale source read to a concurrent replacement.
+                fields["source_generation"] = generation
+                if generation is not None:
+                    body["source_generation"] = generation
             store.create_job(tenant_id, job_id, fields)
             # Always send, even if the job already exists. A prior run may have crashed after PutItem.
             # Standard SQS may duplicate; downstream workers must use the stable job/row IDs.

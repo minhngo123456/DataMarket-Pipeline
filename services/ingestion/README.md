@@ -34,6 +34,8 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
 
 Các worker chỉ đọc endpoint/URL và headers từ Source do backend lưu. Không ghi headers hoặc credential vào log. Ba worker đã được triển khai trong stack `marketdata-hoang-dev` ngày 01/11/2026. Luồng CSV và phát lại đã kiểm thử trên AWS; API/HTML mới được kiểm thử bằng fixtures, chưa có kết quả nguồn thật chạy đầu cuối qua UI.
 
+API/Web worker chặn redirect HTTPS xuống HTTP trước khi gửi request tiếp theo, kể cả cùng host, để header cấu hình không bị gửi qua kết nối không mã hóa. Job thất bại với mã an toàn `source_https_downgrade_blocked`; redirect HTTPS cùng host vẫn được hỗ trợ, còn redirect sang host khác bỏ header cấu hình trừ `User-Agent`.
+
 ## Snapshot và retry của API/Web
 
 Trước khi gửi dòng đầu tiên vào `TransformQueue`, worker lưu các dòng đã parse và kiểm tra vào một snapshot bất biến trên S3, rồi gắn snapshot và `row_count` vào job. Snapshot dùng khóa `extractor-snapshots/{tenant}/{source}/{job}.json`; prefix này nằm ngoài `tenants/` để không kích hoạt luồng CSV của RawBucket. Việc tạo snapshot có điều kiện bảo đảm các lần xử lý đồng thời cùng dùng một bộ dữ liệu.

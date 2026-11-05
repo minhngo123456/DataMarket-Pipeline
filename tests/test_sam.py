@@ -141,6 +141,26 @@ def role_statements(resources, role):
     return [s for p in resources[role]["Properties"]["Policies"] for s in p["PolicyDocument"]["Statement"]]
 
 
+def test_source_lifecycle_transaction_checks_are_scoped_to_control_table():
+    resources = translate()["Resources"]
+    expected = [{
+        "Effect": "Allow",
+        "Action": ["dynamodb:ConditionCheckItem"],
+        "Resource": {"Fn::GetAtt": ["ControlTable", "Arn"]},
+    }]
+    normalizer = role_statements(resources, "NormalizerExecutionRole")
+    assert [s for s in normalizer if "dynamodb:ConditionCheckItem" in s["Action"]] == expected
+    api = resources["ApiDataPolicy"]["Properties"]["PolicyDocument"]["Statement"]
+    assert [s for s in api if "dynamodb:ConditionCheckItem" in s["Action"]] == expected
+    # Worker reads and updates need no transaction permission. Do not broaden
+    # the shared ControlTable policy to grant the new action to every consumer.
+    for worker in ("CSVWorker", "APIWorker", "WebWorker"):
+        assert not any(
+            "dynamodb:ConditionCheckItem" in s["Action"]
+            for s in role_statements(resources, worker + "ExecutionRole")
+        )
+
+
 def test_only_notification_function_can_publish_tenant_reports():
     resources = translate()["Resources"]
     aggregator = role_statements(resources, "ReportAggregatorExecutionRole")

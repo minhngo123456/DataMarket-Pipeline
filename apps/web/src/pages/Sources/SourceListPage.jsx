@@ -44,12 +44,21 @@ export function SourceListPage({ user }) {
 
   const run = async (action, mockUpdate, success) => {
     try {
-      if (!sources.isMock) await action();
-      sources.setData((data) => ({ ...data, data: mockUpdate(data.data) }));
+      if (sources.isMock) {
+        sources.setData((data) => ({ ...data, data: mockUpdate(data.data) }));
+      } else {
+        await action();
+        sources.reload();
+      }
       message.success(success);
       return true;
     } catch (error) {
-      message.error(apiErrorMessage(error, 'Không lưu được nguồn.'));
+      if (error?.response?.status === 409) {
+        sources.reload();
+        message.warning('Thao tác xung đột với cấu hình nguồn hiện tại. Đang tải lại danh sách; hãy kiểm tra trước khi thử lại.');
+      } else {
+        message.error(apiErrorMessage(error, 'Không lưu được nguồn.'));
+      }
       return false;
     }
   };
@@ -78,8 +87,13 @@ export function SourceListPage({ user }) {
     const payload = { ...values, enabled: true, ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
     const ok = await run(
       () => marketDataApi.createSource(payload),
-      (list) => [...list, { ...payload, updated_at: new Date().toISOString() }],
-      `Đã thêm ${values.name}.`,
+      (list) => {
+        const source = { ...payload, updated_at: new Date().toISOString() };
+        return list.some((item) => item.source_id === source.source_id)
+          ? list.map((item) => (item.source_id === source.source_id ? { ...item, ...source } : item))
+          : [...list, source];
+      },
+      `Đã lưu ${values.name}.`,
     );
     setSaving(false);
     if (ok) {

@@ -7,22 +7,35 @@ vi.mock('../../services/marketDataApi.js', () => ({
   marketDataApi: { getSources: vi.fn(), createSource: vi.fn(), updateSource: vi.fn(), deleteSource: vi.fn() },
 }));
 
+vi.mock('../../mocks/data.js', () => ({
+  mockSources: {
+    data: [{ source_id: 'competitor-a', name: 'Nguồn mẫu ban đầu', kind: 'csv', enabled: true }],
+  },
+}));
+
 const admin = { role: 'admin', tenant: { max_sources: 3 } };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.values(marketDataApi).forEach((method) => method.mockReset());
   marketDataApi.getSources.mockResolvedValue({ data: [] });
   marketDataApi.createSource.mockResolvedValue({});
+  marketDataApi.updateSource.mockResolvedValue({});
+  marketDataApi.deleteSource.mockResolvedValue({});
 });
 
-async function openDialog() {
-  render(<SourceListPage user={admin} />);
-  await screen.findByText('Chưa cấu hình nguồn nào.');
+async function fillDialog() {
   fireEvent.click(screen.getByRole('button', { name: /Thêm nguồn/ }));
   const dialog = await screen.findByRole('dialog');
   fireEvent.change(within(dialog).getByLabelText('Tên hiển thị'), { target: { value: 'Đối thủ A' } });
   fireEvent.change(within(dialog).getByLabelText('Mã nguồn'), { target: { value: 'competitor-a' } });
   return dialog;
+}
+
+async function openDialog() {
+  render(<SourceListPage user={admin} />);
+  await screen.findByText('Chưa cấu hình nguồn nào.');
+  return fillDialog();
 }
 
 function chooseKind(dialog, label) {
@@ -67,5 +80,70 @@ describe('SourceListPage', () => {
     expect(await within(dialog).findByText('URL phải bắt đầu bằng http:// hoặc https://.')).toBeInTheDocument();
     expect(await within(dialog).findByText('Nhập JSON dạng {"Tên-header": "giá trị"}.')).toBeInTheDocument();
     expect(marketDataApi.createSource).not.toHaveBeenCalled();
+  });
+
+  it('reloads the authoritative list when POST updates an existing source ID', async () => {
+    const original = { source_id: 'competitor-a', name: 'Tên nguồn cũ', kind: 'csv', enabled: true };
+    const other = { source_id: 'other-source', name: 'Nguồn khác', kind: 'csv', enabled: true };
+    const updated = { ...original, name: 'Tên đã lưu trên máy chủ', enabled: false };
+    marketDataApi.getSources.mockResolvedValueOnce({ data: [original, other] })
+      .mockResolvedValue({ data: [updated, other] });
+    render(<SourceListPage user={admin} />);
+    await screen.findByText(original.name);
+
+    submit(await fillDialog());
+
+    await screen.findByText(updated.name);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(marketDataApi.createSource).toHaveBeenCalledTimes(1);
+    expect(marketDataApi.getSources).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(original.name)).not.toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getAllByText(original.source_id)).toHaveLength(1);
+    expect(screen.getByRole('switch', { name: `Bật/tắt ${updated.name}` })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: /Thêm nguồn/ })).toBeEnabled();
+    expect(screen.queryByText('Đã dùng hết 3 nguồn của gói Pilot.')).not.toBeInTheDocument();
+  });
+
+  it.each(['PATCH', 'DELETE'])('reloads a conflicted %s without automatically retrying it', async (method) => {
+    const original = { source_id: 'competitor-a', name: 'Cấu hình trước xung đột', kind: 'csv', enabled: true };
+    const changed = { ...original, name: 'Cấu hình mới của người khác', enabled: false };
+    const mutation = method === 'PATCH' ? marketDataApi.updateSource : marketDataApi.deleteSource;
+    mutation.mockRejectedValue({ response: {
+      status: 409, data: { error: { code: 'conflict', message: 'source_configuration_changed' } },
+    } });
+    marketDataApi.getSources.mockResolvedValueOnce({ data: [original] })
+      .mockResolvedValue({ data: [changed] });
+    render(<SourceListPage user={admin} />);
+    await screen.findByText(original.name);
+
+    if (method === 'PATCH') {
+      fireEvent.click(screen.getByRole('switch', { name: `Bật/tắt ${original.name}` }));
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: `Xóa ${original.name}` }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Xóa', exact: true }));
+    }
+
+    await screen.findByText(changed.name);
+    expect(await screen.findByText('Thao tác xung đột với cấu hình nguồn hiện tại. Đang tải lại danh sách; hãy kiểm tra trước khi thử lại.')).toBeInTheDocument();
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(marketDataApi.getSources).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(original.name)).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: `Bật/tắt ${changed.name}` })).not.toBeChecked();
+  });
+
+  it('updates a mock source with the same ID without adding a duplicate or calling mutations', async () => {
+    marketDataApi.getSources.mockRejectedValue(new Error('Local API unavailable'));
+    render(<SourceListPage user={admin} />);
+    await screen.findByText('Nguồn mẫu ban đầu');
+
+    submit(await fillDialog());
+
+    await screen.findByText('Đối thủ A');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(within(screen.getByRole('table')).getAllByText('competitor-a')).toHaveLength(1);
+    expect(screen.queryByText('Nguồn mẫu ban đầu')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Thêm nguồn/ })).toBeEnabled();
+    expect(marketDataApi.createSource).not.toHaveBeenCalled();
+    expect(marketDataApi.getSources).toHaveBeenCalledTimes(1);
   });
 });
