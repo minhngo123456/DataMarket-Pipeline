@@ -10,6 +10,10 @@ from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
 
 MASKED_HEADER_VALUE = "***"
+PUBLIC_COLLECTION_FIELDS = (
+    "collection_status", "last_job_id", "last_attempt_at", "last_success_at",
+    "last_success_job_id", "last_success_job_at", "last_error_code",
+)
 
 
 def is_http_url(value) -> bool:
@@ -54,6 +58,7 @@ def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> di
             "name": s.get("name", s.get("source_id")),
             "updated_at": s.get("updated_at"),
         }
+        item.update({field: s[field] for field in PUBLIC_COLLECTION_FIELDS if s.get(field) is not None})
         endpoint = s.get("endpoint") or s.get("url")
         url = s.get("url") or s.get("endpoint")
         if endpoint:
@@ -104,9 +109,9 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         )
 
     source_id = identifier(source_id)
+    current = store.get(auth.tenant_id, "SOURCE#" + source_id)
     if headers is not None:
-        current = store.get(auth.tenant_id, "SOURCE#" + source_id) or {}
-        headers = restore_masked_headers(headers, current.get("headers"))
+        headers = restore_masked_headers(headers, (current or {}).get("headers"))
     tenant_meta = store.tenant(auth.tenant_id)
     max_sources = min(int(tenant_meta.get("max_sources", 3)), 3)
 
@@ -124,18 +129,13 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         "name": name,
         "enabled": bool(enabled),
         "updated_at": iso(now),
+        # POST replaces the supported configuration, never worker-owned health.
+        "endpoint": str(endpoint) if endpoint else None,
+        "url": str(url) if url else None,
+        "headers": headers,
     }
-    if endpoint:
-        source_item["endpoint"] = str(endpoint)
-    if url:
-        source_item["url"] = str(url)
-    if headers is not None:
-        source_item["headers"] = headers
-
-    store.put(
-        auth.tenant_id,
-        "SOURCE#" + source_id,
-        source_item,
+    store.update_source_configuration(
+        auth.tenant_id, source_id, source_item, previous=current,
     )
 
     resp_data = {
@@ -188,7 +188,6 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
 
     now = datetime.now(UTC)
     updated = {
-        **existing,
         "name": body.get("name", existing.get("name")),
         "enabled": bool(body.get("enabled", existing.get("enabled", True))),
         "updated_at": iso(now),
@@ -206,11 +205,13 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
 
     if "headers" in body:
         if body["headers"] is None:
-            updated.pop("headers", None)
+            updated["headers"] = None
         else:
             updated["headers"] = restore_masked_headers(body["headers"], existing.get("headers"))
 
-    store.put(auth.tenant_id, "SOURCE#" + source_id, updated)
+    updated = store.update_source_configuration(
+        auth.tenant_id, source_id, updated, previous=existing,
+    )
 
     resp_data = {
         "source_id": source_id,

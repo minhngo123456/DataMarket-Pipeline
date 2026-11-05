@@ -3,6 +3,7 @@
 import os
 import re
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -48,6 +49,57 @@ class DynamoStore:
     def put(self, tenant_id, key, item):
         # Internal configuration/seed operation, never expose this directly as an API.
         self.control.put_item(Item={**item, "pk": pk(tenant_id), "sk": key})
+
+    def update_source_configuration(self, tenant_id, source_id, fields, *, previous):
+        """Update only API-owned configuration, preserving concurrent worker health.
+
+        The opaque revision serializes configuration edits independently of health.
+        A stale edit cannot recreate a deleted source or overwrite a replacement.
+        """
+        tenant_id, source_id = identifier(tenant_id), identifier(source_id)
+        self.tenant(tenant_id)
+        allowed = {"source_id", "kind", "name", "enabled", "updated_at", "endpoint", "url", "headers"}
+        if not fields or not set(fields) <= allowed:
+            raise InvalidRecord("invalid_source_configuration")
+        if "source_id" in fields and fields["source_id"] != source_id:
+            raise InvalidRecord("invalid_source_configuration")
+        if previous is not None and "kind" in fields and fields["kind"] != previous.get("kind"):
+            raise Conflict("source_kind_conflict")
+        names = {"#revision": "source_config_revision"}
+        values = {":revision": uuid4().hex}
+        sets = ["#revision = :revision"]
+        removes = []
+        for index, (name, value) in enumerate(fields.items()):
+            key, parameter = f"#f{index}", f":v{index}"
+            names[key] = name
+            if value is None:
+                removes.append(key)
+            else:
+                sets.append(f"{key} = {parameter}")
+                values[parameter] = value
+        condition = "attribute_not_exists(pk)"
+        if previous is not None:
+            condition = "attribute_exists(pk) AND #kind = :previous_kind AND "
+            names["#kind"] = "kind"
+            values[":previous_kind"] = previous["kind"]
+            if "source_config_revision" in previous:
+                condition += "#revision = :previous_revision"
+                values[":previous_revision"] = previous["source_config_revision"]
+            else:
+                # Legacy sources get a revision on their first configuration edit.
+                condition += "attribute_not_exists(#revision)"
+        update = "SET " + ", ".join(sets)
+        if removes:
+            update += " REMOVE " + ", ".join(removes)
+        try:
+            return self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "SOURCE#" + source_id},
+                UpdateExpression=update, ConditionExpression=condition,
+                ExpressionAttributeNames=names, ExpressionAttributeValues=values,
+                ReturnValues="ALL_NEW",
+            )["Attributes"]
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+            raise Conflict("source_configuration_changed") from None
 
     @staticmethod
     def pages(table, **kwargs):

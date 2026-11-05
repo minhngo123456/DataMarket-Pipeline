@@ -63,7 +63,7 @@ Các danh sách dạng bảng (Ma trận, Sản phẩm, Báo cáo, Nguồn) tr�
 | 2 | `GET` | `/dashboard/stats` | Tổng SKU, số nguồn, trạng thái lỗi, report mới nhất | All | 2 |
 | 3 | `GET` | `/alerts` | Danh sách cảnh báo giá/nguồn bất thường | All | 2 |
 | 4 | `GET` | `/sources` | Danh sách nguồn dữ liệu + trạng thái hoạt động | All | 2 |
-| 5 | `POST` | `/sources` | Thêm cấu hình nguồn mới (Tối đa 3 nguồn) | Admin, Analyst | 3 |
+| 5 | `POST` | `/sources` | Tạo nguồn hoặc thay cấu hình nguồn cùng loại (Tối đa 3 nguồn) | Admin, Analyst | 3 |
 | 6 | `PATCH` | `/sources/:id` | Sửa cấu hình / Bật / Tắt nguồn | Admin, Analyst | 3 |
 | 7 | `DELETE` | `/sources/:id` | Xóa nguồn dữ liệu | Admin | 3 |
 | 8 | `POST` | `/jobs` | Tạo job upload $\rightarrow$ Nhận S3 presigned PUT URL | Admin, Analyst | 3 |
@@ -193,7 +193,14 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
         "Authorization": "***"
       },
       "enabled": true,
-      "updated_at": "2026-10-20T12:00:00Z"
+      "updated_at": "2026-10-20T12:00:00Z",
+      "collection_status": "retrying",
+      "last_job_id": "job-api-20261020-1200",
+      "last_attempt_at": "2026-10-20T12:00:00Z",
+      "last_success_at": "2026-10-20T06:00:05Z",
+      "last_success_job_id": "job-api-20261020-0600",
+      "last_success_job_at": "2026-10-20T06:00:00Z",
+      "last_error_code": "api_http_retryable_429"
     },
     {
       "source_id": "web-competitor-b",
@@ -212,12 +219,28 @@ Lấy danh sách các nguồn dữ liệu đã cấu hình của tenant.
 ```
 *Ghi chú:* giá trị trong `headers` chỉ trả nguyên văn cho Admin. Analyst và Viewer chỉ thấy tên header, giá trị là `***` như ví dụ trên. Nếu `POST /sources` hoặc `PATCH /sources/:id` gửi lại `***` cho một header, hệ thống giữ giá trị đã lưu của header đó; header chưa có giá trị thì bị bỏ qua.
 
+Các thay đổi `/sources` dưới đây đã được chuẩn bị trong code local; chưa xác nhận UI tích hợp hoặc kiểm thử AWS thật. Response hiện còn có `sources` là alias của cùng danh sách `data`.
+
+| Trường health công khai, chỉ có khi server đã lưu giá trị | Ý nghĩa |
+| --- | --- |
+| `collection_status` | `running`, `retrying`, `succeeded` hoặc `failed`. Chưa có thì UI hiển thị “Chưa thu thập”. |
+| `last_job_id` | Job của lần thu thập hiện tại. |
+| `last_attempt_at` | Lần bắt đầu xử lý đầu tiên của job, UTC ISO 8601; không đổi qua retry cùng job. |
+| `last_success_at` | Mốc server xác nhận enqueue thành công; giữ lại khi job sau lỗi. |
+| `last_success_job_id` | Job được ghi nhận thành công gần nhất. |
+| `last_success_job_at` | Thời điểm logic của job thành công đó. |
+| `last_error_code` | Mã lỗi an toàn khi retry/failed; không chứa URL/header hoặc credential. |
+
+Trường chưa có hoặc có giá trị null được bỏ khỏi response. `collection_status="succeeded"` chỉ xác nhận extractor đã gửi đủ dòng sang TransformQueue; không chứng minh Normalizer đã accepted mọi dòng. Đối chiếu riêng trạng thái job và accepted/pending/rejected khi hiển thị kết quả chuẩn hóa.
+
+Client không được tự ghi health. `source_config_revision`, `collection_job_key`, `collection_job_at` và `collection_success_key` là các trường nội bộ, không xuất hiện trong response nguồn. Xem thêm [hợp đồng source health](source-collection-status.md).
+
 ---
 
 ### Nhóm 2: Nguồn, Jobs & Upload CSV, Ma trận Giá (Tuần 3)
 
 #### 5. `POST /sources`
-Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant đã đạt tối đa 3 nguồn).
+Tạo nguồn dữ liệu mới, hoặc thay cấu hình được hỗ trợ của nguồn đã tồn tại cùng `source_id` và cùng `kind`. Giới hạn tối đa 3 nguồn vẫn áp dụng khi thêm nguồn mới; cập nhật nguồn cùng ID không tạo thêm nguồn.
 - **Role:** Admin, Analyst
 - **Request Body (Nguồn API hoặc Web):**
 ```json
@@ -239,6 +262,9 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
 - `endpoint`/`url` phải là URL `http(s)`; giá trị khác trả `400 invalid_source_payload` (áp dụng cả cho `PATCH /sources/:id`).
 - Worker chỉ kết nối tới địa chỉ công khai. URL trỏ tới loopback, mạng riêng, link-local, metadata, multicast hoặc dải dành riêng (kể cả qua redirect hay DNS) làm job `failed` với `source_destination_blocked`.
 - Khi redirect sang host khác, worker bỏ mọi header đã cấu hình trừ `User-Agent`.
+- POST cùng kind giữ nguyên health do worker ghi nhưng thay các trường cấu hình được hỗ trợ: `name` mặc định là source ID, `enabled` mặc định true; không có URL qua `endpoint`/`url` thì xóa cả hai trường; `headers` thiếu hoặc null thì xóa cấu hình header. POST vẫn trả 201 trong trường hợp này. Dùng PATCH nếu chỉ muốn sửa một phần.
+- Health, tenant và revision nội bộ không được lấy từ body. Server dùng UUID revision nội bộ và cập nhật có điều kiện để không ghi đè cấu hình đã đổi sau lần đọc hoặc tạo lại nguồn vừa bị xóa. Client không cần gửi revision.
+- Giá trị header trong response vẫn tuân theo role: Admin đọc giá trị gốc, Analyst nhận `***`.
 
 - **Response 201:**
 ```json
@@ -255,12 +281,16 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
   "status": "configured"
 }
 ```
-- **Error 429 (Nếu đã có 3 nguồn):**
+- **Error 409:** `error.code` là `conflict`, `error.message` phân biệt:
+  - `source_kind_conflict`: source ID đã tồn tại với kind khác; không tự đổi kind hoặc xóa health.
+  - `source_configuration_changed`: cấu hình đã bị thay đổi/xóa/tạo lại sau lần server đọc. Client tải lại `GET /sources`, đối chiếu dữ liệu rồi thực hiện lại thay đổi phù hợp; không tự gửi lặp request cũ vô hạn.
+
+- **Error 429 (Khi thêm nguồn mới vượt hạn mức):**
 ```json
 {
   "error": {
-    "code": "QUOTA_EXCEEDED",
-    "message": "Đã đạt giới hạn tối đa 3 nguồn dữ liệu của gói Pilot."
+    "code": "quota_exceeded",
+    "message": "source_limit_reached"
   }
 }
 ```
@@ -270,6 +300,8 @@ Thêm nguồn dữ liệu mới (Hệ thống tự động chặn nếu tenant �
 #### 6. `PATCH /sources/:id`
 Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn dữ liệu.
 - **Role:** Admin, Analyst
+- Chỉ cập nhật các trường cấu hình được hỗ trợ, giữ health và cấu hình không có trong request; `headers:null` xóa cấu hình header. Không hỗ trợ đổi kind qua PATCH.
+- POST/PATCH dùng UUID revision do server quản lý và `UpdateItem` có điều kiện; worker ghi health không làm thay revision cấu hình. Request PATCH cũ không được tạo lại source đã bị xóa hoặc ghi đè source/cấu hình vừa thay đổi. Revision và health không được nhận từ client.
 - **Request Body:**
 ```json
 {
@@ -296,11 +328,18 @@ Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn d
 }
 ```
 
+- **Error 409:** `{"error":{"code":"conflict","message":"source_configuration_changed"}}`. Tải lại `GET /sources` trước khi sửa tiếp; server không áp dụng lại request cũ lên nguồn đã thay đổi.
+- **Error 404:** nguồn chưa tồn tại khi server đọc trả `source_not_found`; PATCH không tạo nguồn mới.
+- Response vẫn che header cho Analyst theo quy tắc của GET; không trả các trường nội bộ hoặc revision.
+
+**Giới hạn snapshot và vòng đời nguồn:** snapshot chỉ cố định sau khi capture/lưu dữ liệu. Job đã có snapshot retry trên dữ liệu cũ; job chưa có snapshot có thể fetch URL/header cấu hình mới. Revision cấu hình chưa ngăn job cũ ghi health vào nguồn bị xóa rồi tạo lại cùng source ID/cùng kind; việc gắn job với source generation riêng còn cần xử lý.
+
 ---
 
 #### 7. `DELETE /sources/:id`
 Xóa cấu hình một nguồn dữ liệu.
 - **Role:** Admin
+- DELETE hiện chưa kiểm tra revision khi xóa. Request DELETE cũ vẫn có thể xóa nguồn đã thay đổi/tạo lại sau lần server đọc; không coi cơ chế revision POST/PATCH là đã bảo vệ DELETE hoặc toàn bộ vòng đời source.
 - **Response 200:**
 ```json
 {
