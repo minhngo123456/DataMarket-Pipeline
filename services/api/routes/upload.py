@@ -61,6 +61,7 @@ def handle_csv_upload_url(
             "schema_version": 1,
             "tenant_id": auth.tenant_id,
             "source_id": source_id,
+            "source_generation": source.get("source_generation"),
             "job_id": job_id,
             "kind": "csv",
             "status": "queued",

@@ -67,11 +67,17 @@ class PublicHTTPSHandler(urllib.request.HTTPSHandler):
 
 class PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if urlsplit(newurl).scheme not in ALLOWED_SCHEMES:
+        destination = urlsplit(newurl)
+        origin = urlsplit(req.full_url)
+        if destination.scheme not in ALLOWED_SCHEMES:
             raise InvalidRecord("source_url_scheme_not_allowed")
+        # Refuse the transition before urllib copies configured source headers
+        # into a request that would send them without TLS, even to the same host.
+        if origin.scheme == "https" and destination.scheme == "http":
+            raise InvalidRecord("source_https_downgrade_blocked")
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         # Source headers can hold API keys; they only belong to the configured host.
-        if redirected and urlsplit(newurl).netloc != urlsplit(req.full_url).netloc:
+        if redirected and destination.netloc != origin.netloc:
             redirected.headers = {k: v for k, v in redirected.headers.items() if k == "User-agent"}
         return redirected
 

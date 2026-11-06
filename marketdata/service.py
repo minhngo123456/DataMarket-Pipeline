@@ -8,7 +8,7 @@ from marketdata.normalize import normalize
 
 def ingest(value, store, now):
     value = envelope(value)
-    _, source, _ = store.require_job(value)
+    _, source, job = store.require_job(value)
     row_id = stable_id(value["tenant_id"], value["source_id"], value["job_id"], value["row_number"])
     previous = store.receipt(value["tenant_id"], row_id)
     if previous:
@@ -22,6 +22,9 @@ def ingest(value, store, now):
         "row_number": value["row_number"],
         "expires_at": int((now + timedelta(days=30)).timestamp()),
     }
+    if job.get("source_generation") is not None:
+        # Trust the persisted job rather than any generation supplied in a message.
+        receipt["source_generation"] = job["source_generation"]
     try:
         normalized = normalize(value["record"], source, now)
     except InvalidRecord as exc:
@@ -45,6 +48,8 @@ def ingest(value, store, now):
         normalized["price_basis"],
         normalized["price"],
     )
+    if "source_generation" in receipt:
+        receipt["content_id"] = stable_id(receipt["source_generation"], receipt["content_id"])
     mapping = store.mapping(value["tenant_id"], value["source_id"], normalized["source_sku"])
     if mapping is None:
         receipt.update(status="pending", reason="sku_needs_confirmation")

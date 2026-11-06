@@ -2,12 +2,17 @@
 
 import socket
 import threading
+import urllib.request
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
+from urllib.response import addinfourl
 
 import pytest
 
 from marketdata.contracts import InvalidRecord
 from services.ingestion import api_worker, safe_http, web_worker
+from services.ingestion.collection import collection_error_code
 
 FETCHERS = [api_worker.default_fetcher, web_worker.default_fetcher]
 
@@ -153,3 +158,70 @@ def test_redirect_to_other_host_drops_source_headers(server, monkeypatch):
     assert first["Authorization"] == "Bearer k"
     assert "Authorization" not in second
     assert second["User-Agent"] == "Test"
+
+
+@pytest.mark.parametrize("fetch", FETCHERS)
+@pytest.mark.parametrize("target_host", ["prices.example.invalid", "other.example.invalid"])
+def test_https_downgrade_is_blocked_before_any_http_request(fetch, target_host, monkeypatch):
+    seen = []
+
+    def redirect_https(_handler, request):
+        seen.append(request.full_url)
+        headers = Message()
+        headers["Location"] = f"http://{target_host}/feed"
+        response = addinfourl(BytesIO(b""), headers, request.full_url, code=302)
+        response.msg = "Found"
+        return response
+
+    def forbidden_http(_handler, request):
+        raise AssertionError("the downgrade target must not receive an HTTP request")
+
+    monkeypatch.setattr(safe_http.PublicHTTPSHandler, "https_open", redirect_https)
+    monkeypatch.setattr(safe_http.PublicHTTPHandler, "http_open", forbidden_http)
+    with pytest.raises(InvalidRecord) as error:
+        fetch("https://prices.example.invalid/feed", headers={
+            "Authorization": "Bearer fixture-only", "X-Api-Key": "fixture-only",
+        })
+
+    assert str(error.value) == "source_https_downgrade_blocked"
+    assert seen == ["https://prices.example.invalid/feed"]
+    assert collection_error_code(error.value, "api") == "source_https_downgrade_blocked"
+    assert collection_error_code(error.value, "web") == "source_https_downgrade_blocked"
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_https_downgrade_is_refused_before_urllib_copies_headers(code, monkeypatch):
+    request = urllib.request.Request(
+        "https://prices.example.invalid/feed", headers={"Authorization": "Bearer fixture-only"},
+    )
+
+    def unexpected_redirect(*args, **kwargs):
+        raise AssertionError("urllib must not construct a downgraded request")
+
+    monkeypatch.setattr(urllib.request.HTTPRedirectHandler, "redirect_request", unexpected_redirect)
+    with pytest.raises(InvalidRecord, match="^source_https_downgrade_blocked$"):
+        safe_http.PublicRedirectHandler().redirect_request(
+            request, None, code, "Moved", {}, "http://prices.example.invalid/next",
+        )
+
+
+@pytest.mark.parametrize("same_origin", [True, False])
+def test_https_redirect_preserves_same_origin_headers_and_strips_cross_origin(same_origin):
+    request = urllib.request.Request("https://prices.example.invalid/feed", headers={
+        "Authorization": "Bearer fixture-only", "X-Api-Key": "fixture-only",
+        "User-Agent": "FixtureClient",
+    })
+    host = "prices.example.invalid" if same_origin else "other.example.invalid"
+
+    redirected = safe_http.PublicRedirectHandler().redirect_request(
+        request, None, 302, "Found", {}, f"https://{host}/next",
+    )
+
+    headers = {name.lower(): value for name, value in redirected.header_items()}
+    assert headers["user-agent"] == "FixtureClient"
+    if same_origin:
+        assert headers["authorization"] == "Bearer fixture-only"
+        assert headers["x-api-key"] == "fixture-only"
+    else:
+        assert "authorization" not in headers
+        assert "x-api-key" not in headers

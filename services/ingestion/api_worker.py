@@ -110,11 +110,14 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     if job.get("source_id") != source_id or job.get("kind") != "api":
         raise AccessDenied("api_job_required")
     store.tenant(tenant_id)
+    source = store.get(tenant_id, "SOURCE#" + source_id)
+    if source and source.get("kind") == "api" and not store.source_job_matches(source, job):
+        store.fail_source_job(tenant_id, job_id, source_id, "api", "source_generation_changed")
+        return
     if job.get("status") == "completed":
         store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
         return
 
-    source = store.get(tenant_id, "SOURCE#" + source_id)
     if not source or source.get("kind") != "api" or not source.get("enabled"):
         store.tenant(tenant_id)
         store.fail_source_job(tenant_id, job_id, source_id, "api", "source_disabled_or_missing")
@@ -129,10 +132,15 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     store.record_source_collection(tenant_id, source_id, job_id, "api", "running")
 
     def load_rows():
-        endpoint = source.get("endpoint") or source.get("url")
+        # A queued job may outlive a deleted source. Resolve configuration again
+        # against its persisted generation immediately before the first fetch.
+        _, current_source, _ = store.require_job(
+            {"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id}
+        )
+        endpoint = current_source.get("endpoint") or current_source.get("url")
         if not endpoint:
             raise InvalidRecord("missing_api_endpoint")
-        return parse_api_payload(fetch(endpoint, headers=source.get("headers")))
+        return parse_api_payload(fetch(endpoint, headers=current_source.get("headers")))
 
     try:
         snapshot = (snapshots or SourceSnapshots()).get_or_create(event, job, load_rows)
@@ -150,6 +158,11 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
     if committed_job["status"] == "completed":
         store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
         return
+    current_source = store.get(tenant_id, "SOURCE#" + source_id)
+    if current_source and not store.source_job_matches(current_source, committed_job):
+        store.fail_source_job(tenant_id, job_id, source_id, "api", "source_generation_changed")
+        return
+    store.require_job({"tenant_id": tenant_id, "source_id": source_id, "job_id": job_id})
     send_rows(sqs, transform_queue, snapshot.values)
     store.record_source_collection(tenant_id, source_id, job_id, "api", "succeeded")
 
