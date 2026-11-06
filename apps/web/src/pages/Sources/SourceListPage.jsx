@@ -1,4 +1,4 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tag, message } from 'antd';
 import { useState } from 'react';
 import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
@@ -14,6 +14,44 @@ const KINDS = [
 ];
 const MAX_SOURCES = 3;
 const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://shop.nha-cung-cap.vn/bang-gia' };
+const COLLECTION_STATUS = {
+  running: { color: 'processing', label: 'Đang thu thập' },
+  retrying: { color: 'warning', label: 'Chờ thử lại' },
+  succeeded: { color: 'success', label: 'Đã thu thập' },
+  failed: { color: 'error', label: 'Thu thập lỗi' },
+};
+
+function CollectionStatus({ source }) {
+  const status = source.collection_status;
+  const display = Object.hasOwn(COLLECTION_STATUS, status)
+    ? COLLECTION_STATUS[status]
+    : { color: 'default', label: status ? 'Chưa xác định' : 'Chưa thu thập' };
+  const error = source.last_error_code;
+  const showError = (status === 'retrying' || status === 'failed')
+    && typeof error === 'string' && /^[a-z][a-z0-9_]{0,95}$/.test(error);
+  return (
+    <div className="source-collection-status">
+      <Tag color={display.color}>{display.label}</Tag>
+      {showError && <span className="source-collection-error">Mã lỗi: <code>{error}</code></span>}
+    </div>
+  );
+}
+
+function CollectionTime({ value }) {
+  if (typeof value !== 'string' || !value.trim() || !Number.isFinite(Date.parse(value))) {
+    return <span className="muted">Chưa ghi nhận</span>;
+  }
+  return <time dateTime={value} title="Giờ Việt Nam (UTC+7)">{formatDateTime(value)}</time>;
+}
+
+function CollectionHistory({ source }) {
+  return (
+    <dl className="source-collection-history">
+      <div><dt>Lần chạy</dt><dd><CollectionTime value={source.last_attempt_at} /></dd></div>
+      <div><dt>Thành công gần nhất</dt><dd><CollectionTime value={source.last_success_at} /></dd></div>
+    </dl>
+  );
+}
 
 function parseHeaders(text) {
   const parsed = JSON.parse(text);
@@ -103,14 +141,17 @@ export function SourceListPage({ user }) {
   };
 
   const columns = [
-    { title: 'NGUỒN', dataIndex: 'name', key: 'name', render: (name, row) => <div className="table-primary"><strong>{name}</strong><span>{row.source_id}</span></div> },
-    { title: 'LOẠI', dataIndex: 'kind', key: 'kind', render: (value) => <Tag>{String(value).toUpperCase()}</Tag> },
-    { title: 'ĐỊA CHỈ', key: 'endpoint', ellipsis: true, render: (_, row) => row.endpoint || row.url || '—' },
-    { title: 'CẬP NHẬT', dataIndex: 'updated_at', key: 'updated_at', render: (v) => <span title={formatDateTime(v)}>{timeAgo(v)}</span> },
+    { title: 'NGUỒN', dataIndex: 'name', key: 'name', width: 200, render: (name, row) => <div className="table-primary"><strong>{name}</strong><span>{row.source_id}</span></div> },
+    { title: 'LOẠI', dataIndex: 'kind', key: 'kind', width: 90, render: (value) => <Tag>{String(value).toUpperCase()}</Tag> },
+    { title: 'ĐỊA CHỈ', key: 'endpoint', width: 190, ellipsis: true, render: (_, row) => row.endpoint || row.url || '—' },
+    { title: 'THU THẬP', key: 'collection', width: 220, render: (_, row) => <CollectionStatus source={row} /> },
+    { title: 'LỊCH SỬ THU THẬP', key: 'collection_history', width: 190, render: (_, row) => <CollectionHistory source={row} /> },
+    { title: 'SỬA CẤU HÌNH', dataIndex: 'updated_at', key: 'updated_at', width: 140, render: (v) => <span title={formatDateTime(v)}>{timeAgo(v)}</span> },
     {
       title: 'BẬT',
       dataIndex: 'enabled',
       key: 'enabled',
+      width: 100,
       render: (enabled, row) => (canEdit
         ? <Switch checked={enabled !== false} onChange={(value) => toggle(row, value)} aria-label={`Bật/tắt ${row.name}`} />
         : <Tag color={enabled !== false ? 'green' : 'default'}>{enabled !== false ? 'Đang bật' : 'Đã tắt'}</Tag>),
@@ -118,6 +159,7 @@ export function SourceListPage({ user }) {
     ...(role === 'admin' ? [{
       title: '',
       key: 'delete',
+      width: 56,
       render: (_, row) => (
         <Popconfirm title={`Xóa nguồn ${row.name}?`} description="Cấu hình nguồn bị xóa, dữ liệu giá đã lưu vẫn giữ." okText="Xóa" cancelText="Hủy" okButtonProps={{ danger: true }} onConfirm={() => remove(row)}>
           <Button type="text" danger icon={<DeleteOutlined />} aria-label={`Xóa ${row.name}`} />
@@ -132,13 +174,17 @@ export function SourceListPage({ user }) {
         eyebrow="KẾT NỐI VÀ ĐỒNG BỘ"
         title="Nguồn dữ liệu"
         description={`Gói Pilot cho tối đa ${limit} nguồn. Nguồn API và web được thu thập 6 giờ một lần.`}
-        actions={canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= limit} onClick={() => setOpen(true)}>Thêm nguồn</Button>}
+        actions={<>
+          <Button icon={<ReloadOutlined />} loading={sources.loading} disabled={sources.loading} onClick={sources.reload}>Làm mới</Button>
+          {canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= limit} onClick={() => setOpen(true)}>Thêm nguồn</Button>}
+        </>}
       />
       {sources.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, trang đang hiển thị dữ liệu mẫu. Thay đổi chỉ có trên màn hình." />}
       {canEdit && rows.length >= limit && <Alert className="page-alert" type="info" showIcon title={`Đã dùng hết ${limit} nguồn của gói Pilot.`} />}
+      <p className="source-collection-note">“Đã thu thập” nghĩa là đã đọc nguồn và gửi dữ liệu để chuẩn hóa, chưa xác nhận các dòng đã được chấp nhận. Thời gian hiển thị theo giờ Việt Nam (UTC+7).</p>
       <Card className="panel-card table-panel" variant="borderless">
         {sources.error ? <LoadError error={apiErrorMessage(sources.error)} onRetry={sources.reload} /> : (
-          <Table columns={columns} dataSource={rows} rowKey="source_id" loading={sources.loading} pagination={false} scroll={{ x: 640 }} locale={{ emptyText: 'Chưa cấu hình nguồn nào.' }} />
+          <Table columns={columns} dataSource={rows} rowKey="source_id" loading={sources.loading} pagination={false} scroll={{ x: 1186 }} locale={{ emptyText: 'Chưa cấu hình nguồn nào.' }} />
         )}
       </Card>
       <Modal title="Thêm nguồn dữ liệu" open={open} okText="Thêm" cancelText="Hủy" confirmLoading={saving} onOk={create} onCancel={() => setOpen(false)} destroyOnHidden>

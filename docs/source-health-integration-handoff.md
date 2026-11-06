@@ -2,6 +2,16 @@
 
 Phần worker thu thập có thể kiểm tra độc lập với frontend. Bản thay đổi local bổ sung dữ liệu trạng thái vào `GET /sources` và bảo vệ trạng thái đó khi sửa cấu hình nguồn. Hiếu review phần API trước khi hợp nhất; Minh có thể dùng ví dụ local để tích hợp song song. Đây chưa phải kết quả nghiệm thu giao diện hoặc AWS thật.
 
+## Giao diện local ngày 06/11/2026
+
+Trang Nguồn đã đọc `collection_status`, `last_attempt_at`, `last_success_at` và `last_error_code` từ cùng response `GET /sources`. Trang hiển thị trạng thái chưa thu thập/đang thu thập/chờ thử lại/đã thu thập/thu thập lỗi; trạng thái lạ hiển thị trung lập “Chưa xác định”. Thời gian dùng giờ Việt Nam, thiếu hoặc sai thời gian hiển thị “Chưa ghi nhận”. Mã lỗi chỉ xuất hiện khi retry/failed và đúng định dạng mã máy an toàn; không hiển thị URL hoặc exception tùy ý.
+
+Bật/tắt nguồn được hiển thị riêng, không thay thế kết quả thu thập hoặc xóa lịch sử thành công. Cột sửa cấu hình vẫn dùng `updated_at`, không coi đó là lần thu thập. Nút “Làm mới” đọc lại danh sách, dùng được cho Viewer; không polling, không gọi endpoint job và không yêu cầu thêm quyền. Trang giải thích “Đã thu thập” chưa xác nhận các dòng được Normalizer chấp nhận.
+
+Fixture giao diện có ba ví dụ: chưa chạy, thành công, nguồn đã tắt với lần chạy lỗi và lịch sử thành công. Bố cục đã được kiểm tra bằng preview local dùng fixture, không đăng nhập Cognito hoặc gọi AWS. Ảnh kiểm tra nằm tại `build/evidence/source-health-ui-20261106.jpg`. Kiểm thử hiển thị nằm trong `apps/web/src/pages/Sources/SourceListPage.health.test.jsx`, tách khỏi test cấu hình/reload/409 hiện có.
+
+Kiểm chứng ngày 06/11: 8 ca health mới và 7 ca cấu hình/reload/409 hiện có đã pass khi chạy với `--maxWorkers=1`; production build đạt, còn cảnh báo bundle JavaScript lớn. Test health bao phủ trạng thái thiếu/lạ, giờ Việt Nam, timestamp sai, lịch sử thành công khi retry/lỗi, nguồn đã tắt, ẩn mã lỗi cũ/không an toàn và Viewer làm mới dữ liệu. Chưa chạy lại toàn bộ Vitest hoặc nghiệm thu với backend AWS trong bước này.
+
 ## Chạy ngay ở local
 
 Dùng Python 3.12 và dependencies trong `requirements-dev.lock.txt`. Môi trường 3.12 đã chuẩn bị trên máy hiện tại nằm ở `build/venv312`.
@@ -49,8 +59,8 @@ Sau POST/PATCH, đọc lại `GET /sources` để nhận health; response ghi c�
 
 ## Việc còn lại để nghiệm thu phần của Hướng
 
-1. Hiếu review/hợp nhất API; Minh nối trạng thái nguồn và xử lý trường vắng mặt/409 theo bảng trên.
-2. Hướng cùng Minh kiểm tra UI bằng ví dụ local: dữ liệu nguồn, lịch sử thành công sau retry/lỗi và job/ma trận tương ứng.
+1. Hiếu review/hợp nhất API; Minh review/hợp nhất giao diện local đã bổ sung, gồm trạng thái nguồn, trường vắng mặt và xử lý 409 theo bảng trên.
+2. Hướng cùng Minh nghiệm thu UI trên bản tích hợp: dữ liệu nguồn, lịch sử thành công sau retry/lỗi và job/ma trận tương ứng. Preview và test local chưa thay thế bước nghiệm thu với backend triển khai.
 3. Nhận kết quả Hoàng chạy AWS trong phạm vi chi phí được xác nhận/chấp thuận: job ID, counts, số dòng ma trận, log lỗi đã che thông tin nhạy cảm. Đối chiếu bộ `expected-results.json` đã gửi Hoàng và [checklist AWS của Hướng](huong-aws-readiness.md).
 
 Hiếu/Hoàng cần review các ca hồi quy generation và DELETE trên bản tích hợp; đây là thay đổi code/local, chưa phải nghiệm thu UI hoặc AWS. Trong cùng generation, snapshot cố định sau khi capture; job chưa có snapshot có thể đọc cấu hình mới. Retry dùng snapshot đã gắn với job vẫn giữ dữ liệu cũ, còn job khác generation bị chặn sau khi xóa/tạo lại nguồn. Hợp đồng vòng đời nguồn, tương thích legacy và giới hạn form cũ được mô tả trong [hợp đồng trạng thái nguồn](source-collection-status.md).

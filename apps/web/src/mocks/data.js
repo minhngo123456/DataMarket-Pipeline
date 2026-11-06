@@ -10,8 +10,8 @@ const daysAgo = (days, hour = 2) => {
 export const mockSources = {
   data: [
     { source_id: 'internal', name: 'Bảng giá nội bộ (CSV)', kind: 'csv', enabled: true, updated_at: hoursAgo(2) },
-    { source_id: 'tiki-api', name: 'Tiki API', kind: 'api', enabled: true, updated_at: hoursAgo(1) },
-    { source_id: 'sendo-web', name: 'Sendo Web', kind: 'web', enabled: false, updated_at: hoursAgo(30) },
+    { source_id: 'tiki-api', name: 'Tiki API', kind: 'api', enabled: true, updated_at: hoursAgo(8), collection_status: 'succeeded', last_attempt_at: hoursAgo(1), last_success_at: hoursAgo(1) },
+    { source_id: 'sendo-web', name: 'Sendo Web', kind: 'web', enabled: false, updated_at: hoursAgo(4), collection_status: 'failed', last_attempt_at: hoursAgo(6), last_success_at: hoursAgo(20), last_error_code: 'web_http_error_404' },
   ],
   total: 3,
   page: 1,

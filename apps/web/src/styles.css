@@ -1070,6 +1070,52 @@ a {
   font-size: 8px;
 }
 
+.source-collection-note {
+  max-width: 860px;
+  margin: 0 0 16px;
+  color: #5c667a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.source-collection-status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.workspace-page .source-collection-status .ant-tag {
+  font-size: 11px;
+  line-height: 22px;
+  white-space: normal;
+}
+
+.source-collection-error {
+  color: #8b4a35;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.source-collection-history {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.source-collection-history dt {
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.source-collection-history dd {
+  margin: 3px 0 0;
+  color: #37465d;
+  font-size: 12px;
+}
+
 .price-up {
   color: #27966b;
   font-weight: 620;
