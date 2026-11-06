@@ -42,6 +42,16 @@ Từ thư mục gốc, dùng môi trường Python local đã có các dependenc
 
 Các demo local và giới hạn mô phỏng được mô tả trong [bàn giao Hướng](huong-handover.md) và [README ingestion](../services/ingestion/README.md). Chúng không xác minh IAM hoặc cơ chế vận chuyển sự kiện Lambda/SQS trên AWS thật.
 
+### Package local ngày 06/11/2026
+
+Đã stage lại từ working tree trên nền `55f0f38`, gồm các bản sửa runtime chưa commit: **43/43 file staging khớp source, 0 file cũ**. Python 3.12.14 và `pip check` đạt. Package ZIP `build/lambda-package-20261106.zip` đã được tạo với 8 dependency runtime pin đúng lock, cài vào target riêng từ wheel pure-Python trong cache bằng chế độ `--no-index`; không tải mạng.
+
+Gói có 2.888 file, 17.114.799 byte; SHA-256 `b81685071771da96080be25cea7b6db8566d01d9455ee3b3c760594355368fb0`. Manifest tại `build/evidence/huong-package-manifest-20261106.json` lưu hash nguồn, toàn bộ file package và wheel. `build/lambda-package-20261106.sam.yaml` trỏ 9 function tới ZIP local; template nguồn trong infra được giữ nguyên.
+
+Đã đối chiếu hash sau giải nén, compile 259 file Python và import 8 handler của 9 function trong Python isolated (`-I -S -B`), chặn socket/DNS và không dùng development site-packages. Không đóng gói tệp cấu hình/credential local, tests, fixtures hoặc dependency dev; `botocore/cacert.pem` là CA bundle TLS cần cho SDK. SAM dịch offline được **103 tài nguyên**, cfn-lint đạt trên hai template nguồn, bản dịch và SAM local trỏ ZIP; **18 test SAM/IAM pass**.
+
+Đây là ZIP chuẩn bị bằng Python/pip từ wheel cache; **chưa chạy SAM CLI hoặc container Lambda Linux**, máy hiện chưa cài SAM CLI. Import smoke chạy trên Windows/Python 3.12 không thay thế kiểm chứng runtime Linux, IAM hoặc AWS. Không deploy/upload, gọi AWS, bật lịch hoặc chạy migration thật. Chi tiết và lệnh thực tế: `build/evidence/huong-package-review-20261106.md`. Artifact/evidence bị Git ignore; cần bàn giao chúng cùng manifest cho người review. Code/requirements/template đổi tiếp thì phải tạo lại gói và hash.
+
 ### Kết quả offline ngày 04/11/2026
 
 Kiểm tra trên nền commit `39c18f1` cùng các thay đổi local chưa commit:
