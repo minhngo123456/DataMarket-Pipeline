@@ -72,9 +72,26 @@ def process_event(event, store, s3, sqs, bucket, transform_queue):
         raise AccessDenied("upload_job_unavailable")
     if job["kind"] != "csv":
         raise AccessDenied("csv_job_required")
+    store.tenant(tenant_id)
+    current_source = store.get(tenant_id, "SOURCE#" + job["source_id"])
+    if (
+        current_source and current_source.get("kind") == "csv"
+        and not store.source_job_matches(current_source, job)
+    ):
+        # A disabled replacement is still a different source lifetime. Consume
+        # the obsolete delivery instead of retrying it as a disabled old source.
+        store.fail_source_job(
+            tenant_id, job_id, job["source_id"], "csv", "source_generation_changed"
+        )
+        return
     source = store.source(tenant_id, job["source_id"])
     if source.get("kind") != "csv":
         raise AccessDenied("csv_job_required")
+    if not store.source_job_matches(source, job):
+        store.fail_source_job(
+            tenant_id, job_id, job["source_id"], "csv", "source_generation_changed"
+        )
+        return
     version = detail["object"].get("version-id")
     if not version:
         raise InvalidRecord("s3_version_required")
@@ -124,6 +141,13 @@ def process_event(event, store, s3, sqs, bucket, transform_queue):
     if committed_job["status"] == "completed":
         store.record_source_collection(tenant_id, job["source_id"], job_id, "csv", "succeeded")
         return
+    current_source = store.get(tenant_id, "SOURCE#" + job["source_id"])
+    if current_source and not store.source_job_matches(current_source, committed_job):
+        store.fail_source_job(
+            tenant_id, job_id, job["source_id"], "csv", "source_generation_changed"
+        )
+        return
+    store.require_job({"tenant_id": tenant_id, "source_id": job["source_id"], "job_id": job_id})
     send_rows(sqs, transform_queue, values)
     store.record_source_collection(tenant_id, job["source_id"], job_id, "csv", "succeeded")
 

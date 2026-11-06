@@ -86,6 +86,8 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
     kind = body.get("kind")
     name = body.get("name", source_id)
     enabled = body.get("enabled", True)
+    if type(enabled) is not bool:
+        return error("invalid_source_payload", "enabled must be a boolean", 400)
 
     if not source_id or kind not in ("csv", "api", "web"):
         return error(
@@ -127,7 +129,7 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         "source_id": source_id,
         "kind": kind,
         "name": name,
-        "enabled": bool(enabled),
+        "enabled": enabled,
         "updated_at": iso(now),
         # POST replaces the supported configuration, never worker-owned health.
         "endpoint": str(endpoint) if endpoint else None,
@@ -142,7 +144,7 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         "source_id": source_id,
         "kind": kind,
         "name": name,
-        "enabled": bool(enabled),
+        "enabled": enabled,
         "status": "configured",
     }
     if endpoint:
@@ -179,6 +181,9 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
     except json.JSONDecodeError:
         return error("invalid_json", "Request body must be valid JSON", 400)
 
+    if "enabled" in body and type(body["enabled"]) is not bool:
+        return error("invalid_source_payload", "enabled must be a boolean", 400)
+
     if "headers" in body and body["headers"] is not None and not isinstance(body["headers"], dict):
         return error(
             "invalid_source_payload",
@@ -189,7 +194,7 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
     now = datetime.now(UTC)
     updated = {
         "name": body.get("name", existing.get("name")),
-        "enabled": bool(body.get("enabled", existing.get("enabled", True))),
+        "enabled": body.get("enabled", existing.get("enabled", True)),
         "updated_at": iso(now),
     }
 
@@ -245,9 +250,7 @@ def handle_delete_source(event: dict, store: DynamoStore, auth: AuthContext) -> 
     if not existing:
         return error("source_not_found", "Source does not exist", 404)
 
-    # Delete source record from ControlTable
-    from marketdata.repository import pk
-    store.control.delete_item(Key={"pk": pk(auth.tenant_id), "sk": "SOURCE#" + source_id})
+    store.delete_source_configuration(auth.tenant_id, source_id, previous=existing)
 
     return ok({
         "source_id": source_id,

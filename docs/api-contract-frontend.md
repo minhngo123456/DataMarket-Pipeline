@@ -233,7 +233,7 @@ Các thay đổi `/sources` dưới đây đã được chuẩn bị trong code 
 
 Trường chưa có hoặc có giá trị null được bỏ khỏi response. `collection_status="succeeded"` chỉ xác nhận extractor đã gửi đủ dòng sang TransformQueue; không chứng minh Normalizer đã accepted mọi dòng. Đối chiếu riêng trạng thái job và accepted/pending/rejected khi hiển thị kết quả chuẩn hóa.
 
-Client không được tự ghi health. `source_config_revision`, `collection_job_key`, `collection_job_at` và `collection_success_key` là các trường nội bộ, không xuất hiện trong response nguồn. Xem thêm [hợp đồng source health](source-collection-status.md).
+Client không được tự ghi health. `source_generation`, `source_config_revision`, `collection_job_key`, `collection_job_at` và `collection_success_key` là các trường nội bộ, không xuất hiện trong response nguồn. Xem thêm [hợp đồng source health](source-collection-status.md).
 
 ---
 
@@ -262,8 +262,12 @@ Tạo nguồn dữ liệu mới, hoặc thay cấu hình được hỗ trợ c�
 - `endpoint`/`url` phải là URL `http(s)`; giá trị khác trả `400 invalid_source_payload` (áp dụng cả cho `PATCH /sources/:id`).
 - Worker chỉ kết nối tới địa chỉ công khai. URL trỏ tới loopback, mạng riêng, link-local, metadata, multicast hoặc dải dành riêng (kể cả qua redirect hay DNS) làm job `failed` với `source_destination_blocked`.
 - Khi redirect sang host khác, worker bỏ mọi header đã cấu hình trừ `User-Agent`.
+- Worker chặn redirect từ HTTPS xuống HTTP trước khi tạo request tiếp theo, kể cả cùng host, với mã lỗi an toàn `source_https_downgrade_blocked`.
+- Nếu gửi `enabled`, giá trị phải là JSON boolean `true` hoặc `false`. Chuỗi, số, null, array hoặc object trả HTTP 400 `invalid_source_payload`, message `enabled must be a boolean`; cấu hình không được ghi.
+- Tạo/xóa nguồn cập nhật revision danh sách nguồn của tenant trong cùng transaction với bản ghi nguồn. Hai request tạo khác ID không thể cùng dùng suất quota cuối; request vượt hạn mức trả 429 `source_limit_reached`. Quota tính cả nguồn đã tắt; chỉnh nguồn hiện có không chiếm thêm suất. Revision danh sách nguồn là nội bộ, tenant cũ không cần backfill counter.
 - POST cùng kind giữ nguyên health do worker ghi nhưng thay các trường cấu hình được hỗ trợ: `name` mặc định là source ID, `enabled` mặc định true; không có URL qua `endpoint`/`url` thì xóa cả hai trường; `headers` thiếu hoặc null thì xóa cấu hình header. POST vẫn trả 201 trong trường hợp này. Dùng PATCH nếu chỉ muốn sửa một phần.
-- Health, tenant và revision nội bộ không được lấy từ body. Server dùng UUID revision nội bộ và cập nhật có điều kiện để không ghi đè cấu hình đã đổi sau lần đọc hoặc tạo lại nguồn vừa bị xóa. Client không cần gửi revision.
+- Health, tenant, generation và revision nội bộ không được lấy từ body. Server dùng UUID revision nội bộ và cập nhật có điều kiện để không ghi đè cấu hình đã đổi sau lần đọc hoặc tạo lại nguồn vừa bị xóa. Client không cần gửi revision hoặc generation.
+- Nguồn mới nhận `source_generation` UUID phía server; POST cùng kind hoặc PATCH nguồn đang tồn tại giữ generation. Xóa rồi tạo lại cùng ID nhận generation mới, nên job của nguồn cũ không được gắn vào nguồn mới. Nguồn/job legacy cùng thiếu generation tiếp tục chạy khi nguồn legacy còn tồn tại; chỉnh cấu hình không tự đổi generation của nguồn legacy.
 - Giá trị header trong response vẫn tuân theo role: Admin đọc giá trị gốc, Analyst nhận `***`.
 
 - **Response 201:**
@@ -301,7 +305,8 @@ Tạo nguồn dữ liệu mới, hoặc thay cấu hình được hỗ trợ c�
 Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn dữ liệu.
 - **Role:** Admin, Analyst
 - Chỉ cập nhật các trường cấu hình được hỗ trợ, giữ health và cấu hình không có trong request; `headers:null` xóa cấu hình header. Không hỗ trợ đổi kind qua PATCH.
-- POST/PATCH dùng UUID revision do server quản lý và `UpdateItem` có điều kiện; worker ghi health không làm thay revision cấu hình. Request PATCH cũ không được tạo lại source đã bị xóa hoặc ghi đè source/cấu hình vừa thay đổi. Revision và health không được nhận từ client.
+- `enabled` khi có mặt phải là JSON boolean; giá trị sai trả 400 `invalid_source_payload` và không ghi thay đổi. Nếu thiếu, giữ trạng thái bật/tắt hiện tại.
+- POST/PATCH dùng UUID revision do server quản lý và `UpdateItem` có điều kiện; worker ghi health không làm thay revision cấu hình. Request PATCH cũ không được tạo lại source đã bị xóa hoặc ghi đè source/cấu hình vừa thay đổi. Generation giữ nguyên khi chỉnh cấu hình; generation, revision và health không được nhận từ client.
 - **Request Body:**
 ```json
 {
@@ -332,14 +337,17 @@ Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn d
 - **Error 404:** nguồn chưa tồn tại khi server đọc trả `source_not_found`; PATCH không tạo nguồn mới.
 - Response vẫn che header cho Analyst theo quy tắc của GET; không trả các trường nội bộ hoặc revision.
 
-**Giới hạn snapshot và vòng đời nguồn:** snapshot chỉ cố định sau khi capture/lưu dữ liệu. Job đã có snapshot retry trên dữ liệu cũ; job chưa có snapshot có thể fetch URL/header cấu hình mới. Revision cấu hình chưa ngăn job cũ ghi health vào nguồn bị xóa rồi tạo lại cùng source ID/cùng kind; việc gắn job với source generation riêng còn cần xử lý.
+**Snapshot và vòng đời nguồn:** trong cùng generation, snapshot chỉ cố định sau khi capture/lưu dữ liệu. Job đã có snapshot retry trên dữ liệu cũ; job chưa có snapshot có thể fetch URL/header cấu hình mới. Sau khi xóa/tạo lại nguồn, job thuộc generation cũ bị chặn trước khi fetch/replay vào nguồn mới; health hiện tại và lịch sử thành công trên nguồn mới được bảo vệ bằng điều kiện generation. Dispatcher đưa generation vào job ID của nguồn mới; schema envelope Transform và snapshot không đổi. Normalizer kiểm tra generation cùng transaction ghi receipt/observation và ACK message đã xác định thuộc generation cũ mà không ghi thêm dữ liệu. Mapping theo source ID và lịch sử đã lưu vẫn được giữ; pending receipt của generation cũ không được duyệt vào nguồn tạo lại.
 
 ---
 
 #### 7. `DELETE /sources/:id`
 Xóa cấu hình một nguồn dữ liệu.
 - **Role:** Admin
-- DELETE hiện chưa kiểm tra revision khi xóa. Request DELETE cũ vẫn có thể xóa nguồn đã thay đổi/tạo lại sau lần server đọc; không coi cơ chế revision POST/PATCH là đã bảo vệ DELETE hoặc toàn bộ vòng đời source.
+- DELETE kiểm tra nguồn vẫn tồn tại, cùng generation và config revision với bản server đã đọc, trong cùng thao tác xóa có điều kiện. Thay đổi health do worker không làm đổi revision nên không gây conflict.
+- **Error 409:** `{"error":{"code":"conflict","message":"source_configuration_changed"}}` khi nguồn bị thay đổi/xóa/tạo lại sau lần server đọc. UI tải lại `GET /sources` để người dùng xem và quyết định lại việc xóa; không tự gửi lặp DELETE cũ.
+- **Error 404:** `source_not_found` khi nguồn chưa tồn tại ở lần server đọc.
+- Xóa cấu hình giữ nguyên mapping theo source ID, job/receipt và lịch sử giá đã lưu. Nếu tạo lại cùng ID, generation mới chặn job và pending receipt của nguồn cũ tác động vào nguồn mới.
 - **Response 200:**
 ```json
 {

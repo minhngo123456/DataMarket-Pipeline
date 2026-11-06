@@ -2,8 +2,9 @@
 
 Run after the normalizer that writes content-based ids is deployed. Prints what would
 change unless --yes is passed. New rows are written before old rows are deleted, so an
-interrupted run can simply be repeated. Identical rows from different jobs collapse into
-one; rows with a different price stay separate because their ids differ.
+interrupted run can simply be repeated. Legacy job-and-row ids collapse into content
+ids; current ids retain their source generation, even when its metadata was not stored.
+Unknown ids without generation metadata are preserved rather than merged speculatively.
 
 Usage:
     python -m scripts.migrate_observation_ids --stack marketdata-dev --tenant group07 \
@@ -16,7 +17,7 @@ from collections import defaultdict
 import boto3
 from boto3.dynamodb.conditions import Attr
 
-from marketdata.contracts import identifier, observation_content_id
+from marketdata.contracts import identifier, observation_content_id, stable_id
 from marketdata.repository import DynamoStore
 
 
@@ -31,17 +32,31 @@ def tenant_observations(table, tenant_id):
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
+def migration_content_id(row, tenant_id):
+    content_id = observation_content_id(
+        tenant_id,
+        row["source_id"],
+        row["source_sku"],
+        row["observed_at"],
+        row["price_basis"],
+        row["price"],
+    )
+    if row.get("source_generation") is not None:
+        return stable_id(row["source_generation"], content_id)
+    if "job_id" in row and "row_number" in row:
+        legacy_id = stable_id(tenant_id, row["source_id"], row["job_id"], row["row_number"])
+        if row["observation_id"] == legacy_id:
+            return content_id
+    # Generation-based observations originally omitted generation metadata. Their
+    # existing content ids are authoritative; hashing only the visible fields
+    # would erase the source lifetime and duplicate the next ingestion.
+    return row["observation_id"]
+
+
 def build_plan(rows, tenant_id):
     groups = defaultdict(list)
     for row in rows:
-        content_id = observation_content_id(
-            tenant_id,
-            row["source_id"],
-            row["source_sku"],
-            row["observed_at"],
-            row["price_basis"],
-            row["price"],
-        )
+        content_id = migration_content_id(row, tenant_id)
         groups[(row["pk"], content_id)].append(row)
 
     plan = {"observations": 0, "unique": len(groups), "duplicate_groups": 0, "writes": [], "deletes": []}

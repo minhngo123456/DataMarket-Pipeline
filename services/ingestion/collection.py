@@ -13,6 +13,7 @@ ERROR_CODES = {
     "source_snapshot_invalid_row_count", "source_destination_blocked", "source_url_scheme_not_allowed",
     "csv_exceeds_1_mib", "invalid_csv_headers", "invalid_csv_columns", "csv_exceeds_1000_rows",
     "empty_csv", "invalid_utf8_csv", "source_disabled_or_missing",
+    "source_generation_changed", "source_https_downgrade_blocked",
 }
 
 
