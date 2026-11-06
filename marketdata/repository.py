@@ -689,9 +689,12 @@ class DynamoStore:
         values = {f":v{i}": value for i, value in enumerate(fields.values())}
         condition = "attribute_exists(pk)"
         if receipt_snapshot is not None:
-            # Receipt revisions cover inserts and reviews; state and row count
-            # also protect against cancellation/failure or extractor updates.
-            for index, name in enumerate(("receipts_revision", "status", "row_count")):
+            # Fence counts and terminal transitions against receipt changes,
+            # extractor updates, cancellation and a changed job identity.
+            for index, name in enumerate((
+                "receipts_revision", "status", "row_count", "source_id", "kind",
+                "source_generation",
+            )):
                 parameter = f"#expected{index}"
                 names[parameter] = name
                 if name in receipt_snapshot:
@@ -820,6 +823,37 @@ class DynamoStore:
             return True
         except self.control.meta.client.exceptions.ConditionalCheckFailedException:
             return False
+
+    def fail_obsolete_source_job(self, tenant_id, job_id, source_id):
+        """Finish obsolete normalization without changing extractor success or its replacement."""
+        tenant_id, job_id, source_id = map(identifier, (tenant_id, job_id, source_id))
+        self.tenant(tenant_id)
+        for _attempt in range(8):
+            job = self.get(tenant_id, "JOB#" + job_id)
+            if (
+                not job or job.get("source_id") != source_id
+                or job.get("kind") not in ("csv", "api", "web")
+                or job.get("status") not in ("queued", "extracting", "normalizing")
+            ):
+                return False
+            source = self.get(tenant_id, "SOURCE#" + source_id)
+            if source and source.get("source_generation") == job.get("source_generation"):
+                return False
+            # Generations are immutable and never reused by source creation.
+            # Count the old job's durable rows; omitted rows stay unprocessed.
+            rows = self.receipts(tenant_id, job_id=job_id)
+            counts = {
+                s: sum(r["status"] == s for r in rows) for s in ("accepted", "pending", "rejected")
+            }
+            try:
+                self.update_job(
+                    tenant_id, job_id, receipt_snapshot=job,
+                    status="failed", error="source_generation_changed", counts=counts,
+                )
+                return True
+            except self.control.meta.client.exceptions.ConditionalCheckFailedException:
+                continue
+        raise Conflict("job_counts_changed")
 
     def refresh_job(self, tenant_id, job_id):
         # Read the job before its receipts. Every receipt mutation bumps the
