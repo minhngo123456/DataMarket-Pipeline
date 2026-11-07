@@ -3,6 +3,7 @@ import { Alert, Button, Card, Table, Tag, message } from 'antd';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
+import { reportScheduleEnabled } from '../../config.js';
 import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
 import { mockReports } from '../../mocks/data.js';
 import { marketDataApi } from '../../services/marketDataApi.js';
@@ -56,8 +57,10 @@ export function ReportListPage({ user }) {
   ];
   return (
     <>
-      <PageHeading eyebrow="BÁO CÁO AI" title="Báo cáo" description="Báo cáo thị trường hằng ngày lúc 08:00 (giờ Việt Nam), tóm tắt bởi Claude."
-        actions={canTrigger && !reports.isMock && <Button type="primary" icon={<ThunderboltOutlined />} loading={triggering} onClick={trigger}>Tạo báo cáo ngay</Button>} />
+      <PageHeading eyebrow="BÁO CÁO AI" title="Báo cáo" description="Báo cáo thị trường hằng ngày lúc 08:00 (giờ Việt Nam), tóm tắt bởi AI."
+        actions={canTrigger && !reports.isMock && (reportScheduleEnabled
+          ? <span className="empty-note">Báo cáo được tạo tự động lúc 08:00 mỗi ngày</span>
+          : <Button type="primary" icon={<ThunderboltOutlined />} loading={triggering} onClick={trigger}>Tạo báo cáo ngay</Button>)} />
       {reports.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, trang đang hiển thị dữ liệu mẫu." />}
       <Card className="panel-card table-panel" variant="borderless">
         {reports.error ? <LoadError error={apiErrorMessage(reports.error)} onRetry={reports.reload} /> : (
