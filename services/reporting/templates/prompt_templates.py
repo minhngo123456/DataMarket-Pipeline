@@ -10,6 +10,7 @@ Nguyên tắc bắt buộc:
 4. Luôn công bố rõ ràng các nguồn dữ liệu bị thiếu hoặc dữ liệu cũ/quá hạn (nếu có).
 5. Giữ giọng văn khách quan, chuyên nghiệp.
 6. Giới hạn độ dài tối đa 3-4 đoạn văn (khoảng 300-400 từ), sử dụng tiếng Việt chuẩn.
+7. Trình bày bằng Markdown đơn giản: đoạn văn, danh sách gạch đầu dòng, chữ đậm. Không dùng bảng, khối mã hay dấu ` quanh tên sản phẩm và nguồn.
 """
 
 

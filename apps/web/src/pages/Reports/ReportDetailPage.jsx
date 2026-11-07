@@ -39,7 +39,7 @@ export function ReportDetailPage() {
         actions={report.download_url && <Button icon={<DownloadOutlined />} href={report.download_url} target="_blank" rel="noreferrer">Tải JSON gốc</Button>}
       />
       {detail.isMock && <Alert className="page-alert" type="warning" showIcon title="Chưa kết nối được API, đây là báo cáo mẫu." />}
-      {aiFailed && <Alert className="page-alert" type="warning" showIcon title="AI không khả dụng trong kỳ này" description="Claude API lỗi nên báo cáo chỉ có số liệu thống kê, không có phần phân tích." />}
+      {aiFailed && <Alert className="page-alert" type="warning" showIcon title="AI không khả dụng trong kỳ này" description="Gọi mô hình AI bị lỗi nên báo cáo chỉ có số liệu thống kê, không có phần phân tích." />}
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}><Card className="mini-stat" variant="borderless"><span>Trạng thái</span><strong className="mini-stat-text"><ReportStatus report={report} /></strong></Card></Col>
         <Col xs={24} md={6}><Card className="mini-stat" variant="borderless"><span>Sản phẩm</span><strong>{metrics.total_products ?? '—'}</strong></Card></Col>
