@@ -48,6 +48,21 @@ def handle_get_reports(event: dict, store: DynamoStore, auth: AuthContext) -> di
     )
 
 
+MAX_REPORT_BYTES = 1024 * 1024
+
+
+def stored_report(s3, bucket: str, key: str, report_id: str) -> dict:
+    """Read the full report from S3, or {} so the page still shows the stored preview."""
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        if obj.get("ContentLength", 0) > MAX_REPORT_BYTES:
+            return {}
+        report = json.loads(obj["Body"].read(MAX_REPORT_BYTES + 1))
+    except Exception:
+        return {}
+    return report if isinstance(report, dict) and report.get("report_id") == report_id else {}
+
+
 def handle_get_report_detail(
     event: dict,
     store: DynamoStore,
@@ -74,8 +89,10 @@ def handle_get_report_detail(
     bucket = reports_bucket_name or os.environ.get("REPORTS_BUCKET")
 
     download_url = None
+    full = {}
     if bucket:
         s3 = s3_client or presign_client()
+        full = stored_report(s3, bucket, s3_key, report_id)
         try:
             download_url = s3.generate_presigned_url(
                 "get_object",
@@ -91,9 +108,11 @@ def handle_get_report_detail(
         "period": record.get("period"),
         "status": record.get("status"),
         "ai_status": record.get("ai_status"),
-        "summary": record.get("summary"),
-        "metrics": record.get("metrics", {}),
-        "anomalies": record.get("anomalies", []),
+        # The table keeps a 1000-character preview; the stored report has the whole text.
+        "summary": full.get("summary") or record.get("summary"),
+        "metrics": full.get("metrics") or record.get("metrics", {}),
+        "anomalies": full.get("anomalies") or record.get("anomalies", []),
+        "stale_sources": full.get("stale_sources", []),
         "created_at": record.get("created_at"),
         "s3_key": s3_key,
         "download_url": download_url,

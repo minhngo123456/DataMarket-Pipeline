@@ -148,6 +148,58 @@ def test_slack_rejects_untrusted_endpoint_without_http_request(url, monkeypatch)
     request.assert_not_called()
 
 
+def detail(store, s3, report_id="report-1"):
+    response = handle_get_report_detail(
+        {"pathParameters": {"id": report_id}}, store,
+        AuthContext("admin-a", "tenant-a", "admin", {}),
+        s3_client=s3, reports_bucket_name="reports",
+    )
+    return json.loads(response["body"])
+
+
+def reports_bucket(store):
+    s3 = boto3.client("s3")
+    s3.create_bucket(Bucket="reports")
+    store.put("tenant-a", "REPORT#report-1", {
+        "report_id": "report-1", "summary": "preview cut at 1000 cha",
+        "s3_key": "tenants/tenant-a/reports/report-1.json",
+    })
+    return s3
+
+
+def test_report_detail_returns_the_full_stored_text(store):
+    s3 = reports_bucket(store)
+    full_text = "Đoạn mở đầu. " * 200 + "Câu cuối cùng."
+    s3.put_object(Bucket="reports", Key="tenants/tenant-a/reports/report-1.json", Body=json.dumps({
+        "report_id": "report-1", "summary": full_text,
+        "metrics": {"total_products": 5}, "anomalies": [{"product_id": "phone"}], "stale_sources": ["vendor-c"],
+    }))
+
+    body = detail(store, s3)
+
+    assert body["summary"] == full_text and len(body["summary"]) > 1000
+    assert body["metrics"] == {"total_products": 5}
+    assert body["anomalies"] == [{"product_id": "phone"}]
+    assert body["stale_sources"] == ["vendor-c"]
+
+
+@pytest.mark.parametrize("stored", [None, b"not json", json.dumps({"report_id": "other", "summary": "x"})])
+def test_report_detail_falls_back_to_the_preview(store, stored):
+    s3 = reports_bucket(store)
+    if stored is not None:
+        s3.put_object(Bucket="reports", Key="tenants/tenant-a/reports/report-1.json", Body=stored)
+
+    assert detail(store, s3)["summary"] == "preview cut at 1000 cha"
+
+
+def test_report_detail_ignores_an_oversized_object(store):
+    s3 = reports_bucket(store)
+    s3.put_object(Bucket="reports", Key="tenants/tenant-a/reports/report-1.json",
+                  Body=json.dumps({"report_id": "report-1", "summary": "x" * (1024 * 1024)}))
+
+    assert detail(store, s3)["summary"] == "preview cut at 1000 cha"
+
+
 def test_report_presign_rejects_other_tenant_object_key(store):
     store.put("tenant-a", "REPORT#report-1", {"s3_key": "tenants/tenant-b/reports/report-1.json"})
     signer = MagicMock()
