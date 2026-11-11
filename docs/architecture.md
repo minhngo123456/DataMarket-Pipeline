@@ -1,6 +1,6 @@
 # Kiến trúc và trạng thái tích hợp
 
-> Tài liệu mô tả các thành phần trong mã nguồn và template SAM. Kết quả kiểm tra AWS của phần Hoàng được ghi riêng trong [bàn giao tổng kết](hoang-final-handover.md); khai báo hạ tầng không tự chứng minh luồng nghiệp vụ đã chạy đầu cuối.
+> Tài liệu mô tả các thành phần trong mã nguồn và template SAM. Kết quả kiểm tra AWS của phân hệ Hạ tầng & Chuẩn hóa được ghi riêng trong [bàn giao tổng kết](hoang-final-handover.md); khai báo hạ tầng không tự chứng minh luồng nghiệp vụ đã chạy đầu cuối.
 
 ## Thành phần
 
@@ -55,4 +55,4 @@ Theo báo cáo đã nộp, Vũ Minh Hoàng phụ trách chính hạ tầng AWS/I
 
 ## Phần đã triển khai
 
-Stack đã kiểm thử ngày 01/11 có CSV/API/Web worker, Normalizer, hai Dispatcher, ApiFunction với 21 route và ReportAggregator. Bản mã hợp nhất ngày 04/11 thêm NotificationFunction riêng và chưa triển khai lại trên stack Hoàng, nhưng đã chạy trên `marketdata-dev`. SNS/Slack theo tenant có template cấp tài nguyên riêng; `group07` đã có kênh email, chưa cấu hình Slack. CloudFront không được tạo khi EnableCloudFront=DISABLED; frontend có thể chạy cục bộ với backend AWS.
+Stack đã kiểm thử ngày 01/11 có CSV/API/Web worker, Normalizer, hai Dispatcher, ApiFunction với 21 route và ReportAggregator. Bản mã hợp nhất ngày 04/11 thêm NotificationFunction riêng và chưa triển khai lại trên stack us-east-1, nhưng đã chạy trên `marketdata-dev`. SNS/Slack theo tenant có template cấp tài nguyên riêng; `group07` đã có kênh email, chưa cấu hình Slack. CloudFront không được tạo khi EnableCloudFront=DISABLED; frontend có thể chạy cục bộ với backend AWS.
