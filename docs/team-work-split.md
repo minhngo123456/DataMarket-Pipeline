@@ -29,7 +29,7 @@ Không tách việc dựng AWS sang một người ngoài bốn thành viên nh�
 | 10. Dự phòng sửa lỗi | Tích hợp luồng dịch vụ và API/AI | 16 | 0 | 0 | 0 | 16 | 5 |
 | Tổng | Toàn bộ 5 phân hệ kiến trúc | 576 | 144 | 144 | 144 | 144 | 5 |
 
-Tổng 576 giờ gồm 560 giờ công việc và 16 giờ dự phòng. Mỗi người 144 giờ trong 5 tuần, trung bình 28,8 giờ/tuần. Cột Tuần là lịch dự kiến. Riêng Hoàng: 8 + 40 + 16 + 24 + 24 + 0 + 8 + 24 + 0 + 0 = 144 giờ.
+Tổng 576 giờ gồm 560 giờ công việc và 16 giờ dự phòng. Mỗi người 144 giờ trong 5 tuần, trung bình 28,8 giờ/tuần. Cột Tuần là lịch dự kiến. Mỗi thành viên phụ trách 144 giờ trong 5 tuần theo đúng kế hoạch của Báo cáo 1.
 
 ## Phối hợp và thứ tự tích hợp
 
@@ -45,4 +45,18 @@ Có thể dùng fixture/mock để phát triển song song, nhưng chúng không
 
 Hướng phụ trách extractor; Hoàng phối hợp hạ tầng và chuẩn hóa. Hiếu sở hữu API xác thực/quota và luồng báo cáo; Minh sở hữu UI. Thay đổi contract phải được phía phát và phía nhận cùng review. Không lấy tenant từ trình duyệt hoặc nội dung CSV; backend và worker xác minh theo membership, job và source phía máy chủ.
 
-Bản local đã có code Python, hạ tầng bằng SAM và kiểm thử giả lập cho phần của Hoàng (xem [bàn giao của Hoàng](hoang-handover.md)). Hướng triển khai API/Web worker; CSV worker ban đầu được Hoàng thêm làm adapter tham chiếu cho Hướng và được tích hợp trong cùng luồng ingestion (xem [bàn giao của Hướng](huong-handover.md)). Không coi tài liệu hoặc mock là bằng chứng hệ thống AWS đã chạy. Bảng giờ là phân bổ dự kiến, không phải số giờ đã làm.
+Bản local đã có code Python, hạ tầng bằng SAM và kiểm thử giả lập cho phân hệ Hạ tầng & Chuẩn hóa (xem [tài liệu bàn giao](hoang-handover.md)). Hướng triển khai API/Web worker; CSV worker ban đầu được phát triển làm adapter tham chiếu và được tích hợp trong cùng luồng ingestion (xem [bàn giao của Hướng](huong-handover.md)). Không coi tài liệu hoặc mock là bằng chứng hệ thống AWS đã chạy. Bảng giờ là phân bổ dự kiến, không phải số giờ đã làm.
+
+## Đối chiếu Kế hoạch hành động Báo cáo 2 (Action Plan 210 giờ)
+
+Theo `2627I_INT3319_1_Progress_Report_2_Group_7.pdf` (Bảng 3.3 và 3.4), tổng số giờ hành động còn lại dự kiến của cả nhóm là **210 giờ**, phân bổ theo các thành viên và nhóm nhiệm vụ:
+
+| Thành viên | Trách nhiệm chính trong Action Plan | Số giờ dự kiến |
+| --- | --- | ---: |
+| Ngô Nguyễn Nhật Minh | Giao diện người dùng, Dashboard, tích hợp review Catalog, CORS/CloudFront | 56 |
+| Đỗ Huy Hiếu | Đăng ký/xác thực tài khoản, phân quyền Membership/RBAC, tích hợp AI/Reporting, Quota | 58 |
+| Phạm Văn Hướng | Thu thập dữ liệu (API/Web worker), trạng thái nguồn, xử lý lỗi/DLQ | 52 |
+| Vũ Minh Hoàng | Hạ tầng AWS/SAM, IAM, Chuẩn hóa dữ liệu (Normalizer), Idempotency, Kiểm thử E2E & Giám sát | 44 |
+| **Tổng cộng** | **Toàn bộ hệ thống** | **210** |
+
+> **Ghi chú**: Các tỷ lệ tiến độ và số giờ trong Báo cáo 2 là ước tính tại thời điểm nộp. Chi tiết kỹ thuật, tiến độ và sản phẩm bàn giao cụ thể của từng phân hệ được theo dõi độc lập tại tài liệu bàn giao chuyên trách của từng thành viên (như [Bàn giao phân hệ Hạ tầng & Chuẩn hóa](hoang-final-handover.md), [Bàn giao phân hệ Thu thập dữ liệu](huong-handover.md)).

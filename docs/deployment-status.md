@@ -1,6 +1,6 @@
 # Trạng thái triển khai của nhóm
 
-Cập nhật ngày 04/11/2026, cho stack `marketdata-dev` tại Region `ap-southeast-1`. Code đang chạy gồm bản hợp nhất, báo cáo Gemini và tự đăng ký tài khoản. Stack `marketdata-hoang-dev` tại `us-east-1` là môi trường riêng của Hoàng; kết quả của stack đó nằm trong [bàn giao của Hoàng](hoang-final-handover.md).
+Cập nhật ngày 04/11/2026, cho stack `marketdata-dev` tại Region `ap-southeast-1`. Code đang chạy gồm bản hợp nhất, báo cáo Gemini và tự đăng ký tài khoản. Stack `marketdata-hoang-dev` tại `us-east-1` là môi trường kiểm thử độc lập của phân hệ Hạ tầng & Chuẩn hóa; kết quả kiểm thử được lưu trong [tài liệu bàn giao](hoang-final-handover.md).
 
 ## Cấu hình đang chạy
 

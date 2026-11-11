@@ -1,4 +1,4 @@
-# Triển khai và kiểm tra phần của Hoàng trên AWS
+# Hướng dẫn triển khai và kiểm tra phân hệ Hạ tầng (WBS 2/5/8) trên AWS
 
 Các lệnh dưới đây dùng PowerShell, stack `marketdata-hoang-dev`, profile `marketdata-dev`, Region `us-east-1`. Đổi đồng bộ nếu nhóm dùng môi trường khác. Chạy từ thư mục gốc của repo. Không cần push GitHub để triển khai bản local.
 
