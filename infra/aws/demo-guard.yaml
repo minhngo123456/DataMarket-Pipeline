@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Demo cost alerts and a reversible pause for one existing pipeline stack.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: docs/demo-budget-guard.md
+    must:
+    - Never delete application data or change the account plan.
+    - Permissions refer to the captured stack ID and exact runtime resource ARNs.
+Parameters:
+  TargetStackId:
+    Type: String
+    AllowedPattern: '^arn:aws:cloudformation:[a-z0-9-]+:[0-9]{12}:stack/[A-Za-z0-9-]+/[A-Za-z0-9-]+$'
+  FunctionArns:
+    Type: CommaDelimitedList
+  MappingArns:
+    Type: CommaDelimitedList
+  ScheduleArns:
+    Type: CommaDelimitedList
+  ScheduleRoleArns:
+    Type: CommaDelimitedList
+  RuleArns:
+    Type: CommaDelimitedList
+  CodeBucket:
+    Type: String
+  CodeKey:
+    Type: String
+  AlertEmail:
+    Type: String
+    NoEcho: true
+    AllowedPattern: '^[^\s@]+@[^\s@]+\.[^\s@]+$'
+  BudgetName:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9_-]+$'
+  BudgetStartUtc:
+    Type: String
+  BudgetEndUtc:
+    Type: String
+  DeadlineUtc:
+    Type: String
+  DeadlineExpression:
+    Type: String
+    AllowedPattern: '^at\([0-9T:-]+\)$'
+Resources:
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Keep original runtime settings for resume and audit without adding a database.
+        must:
+        - Private, versioned, and encrypted; application data is never stored here.
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Id: OldGuardVersions
+          Status: Enabled
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 30
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 1
+  StateBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StateBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - !GetAtt StateBucket.Arn
+          - !Sub '${StateBucket.Arn}/*'
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  StopTopic:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Budget messages contain costs only; no extra recurring KMS key is created.
+        must:
+        - Accept budget publications only from this account and this budget.
+        - The warning threshold must never invoke the pause function.
+  StopTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+      - !Ref StopTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowBudgetPublish
+          Effect: Allow
+          Principal:
+            Service: budgets.amazonaws.com
+          Action: sns:Publish
+          Resource: !Ref StopTopic
+          Condition:
+            StringEquals:
+              aws:SourceAccount: !Ref AWS::AccountId
+            ArnEquals:
+              aws:SourceArn: !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/${BudgetName}'
+        - Sid: DenyInsecurePublish
+          Effect: Deny
+          Principal: '*'
+          Action: sns:Publish
+          Resource: !Ref StopTopic
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  Budget:
+    Type: AWS::Budgets::Budget
+    DependsOn:
+    - StopTopicPolicy
+    - StopSubscription
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Account-wide pre-credit usage catches costs from retained resources as well.
+        must:
+        - Billing updates are delayed; the budget is not a hard spending cap.
+        - Pause scope remains the single target stack even though cost scope is account-wide.
+    Properties:
+      Budget:
+        BudgetName: !Ref BudgetName
+        BudgetType: COST
+        BudgetLimit:
+          Amount: '10'
+          Unit: USD
+        TimeUnit: CUSTOM
+        TimePeriod:
+          Start: !Ref BudgetStartUtc
+          End: !Ref BudgetEndUtc
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+          IncludeTax: true
+          IncludeSupport: true
+          IncludeSubscription: true
+          IncludeOtherSubscription: true
+          IncludeRecurring: true
+          IncludeUpfront: true
+          IncludeDiscount: true
+          UseBlended: false
+          UseAmortized: false
+      NotificationsWithSubscribers:
+      - Notification:
+          NotificationType: ACTUAL
+          ComparisonOperator: GREATER_THAN
+          ThresholdType: ABSOLUTE_VALUE
+          Threshold: 5
+        Subscribers:
+        - SubscriptionType: EMAIL
+          Address: !Ref AlertEmail
+      - Notification:
+          NotificationType: ACTUAL
+          ComparisonOperator: GREATER_THAN
+          ThresholdType: ABSOLUTE_VALUE
+          Threshold: 8
+        Subscribers:
+        - SubscriptionType: EMAIL
+          Address: !Ref AlertEmail
+        - SubscriptionType: SNS
+          Address: !Ref StopTopic
+      - Notification:
+          NotificationType: ACTUAL
+          ComparisonOperator: GREATER_THAN
+          ThresholdType: ABSOLUTE_VALUE
+          Threshold: 10
+        Subscribers:
+        - SubscriptionType: EMAIL
+          Address: !Ref AlertEmail
+  FailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+  GuardLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+  GuardRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: SDK-derived actions are narrowed to the captured runtime resources and guard state keys.
+        must:
+        - No application bucket, database, KMS, or secret write/delete permissions.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: PauseAndRestoreTarget
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: cloudformation:ListStackResources
+            Resource: !Ref TargetStackId
+          - Effect: Allow
+            Action:
+            - lambda:GetFunctionConcurrency
+            - lambda:PutFunctionConcurrency
+            - lambda:DeleteFunctionConcurrency
+            Resource: !Ref FunctionArns
+          - Effect: Allow
+            Action:
+            - lambda:GetEventSourceMapping
+            - lambda:UpdateEventSourceMapping
+            Resource: !Ref MappingArns
+          - Effect: Allow
+            Action:
+            - scheduler:GetSchedule
+            - scheduler:UpdateSchedule
+            Resource: !Ref ScheduleArns
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: !Ref ScheduleRoleArns
+            Condition:
+              StringEquals:
+                iam:PassedToService: scheduler.amazonaws.com
+          - Effect: Allow
+            Action:
+            - events:DescribeRule
+            - events:EnableRule
+            - events:DisableRule
+            Resource: !Ref RuleArns
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt StateBucket.Arn
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+            Resource:
+            - !Sub '${StateBucket.Arn}/pause-state.json'
+            - !Sub '${StateBucket.Arn}/guard-lock.json'
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: !GetAtt GuardLogGroup.Arn
+          - Effect: Allow
+            Action: sqs:SendMessage
+            Resource: !GetAtt FailureQueue.Arn
+  GuardFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Preserve the original states before stopping work; serialize with a conditional S3 lock.
+        must:
+        - Dry-run performs no writes; resume is an explicit manual invocation.
+        - This function is outside the target stack and must stay callable after pause.
+    Properties:
+      Runtime: python3.12
+      Architectures:
+      - x86_64
+      Handler: app.handler
+      Role: !GetAtt GuardRole.Arn
+      Timeout: 120
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref GuardLogGroup
+      DeadLetterConfig:
+        TargetArn: !GetAtt FailureQueue.Arn
+      Environment:
+        Variables:
+          TARGET_STACK_ID: !Ref TargetStackId
+          EXPECTED_ACCOUNT_ID: !Ref AWS::AccountId
+          STATE_BUCKET: !Ref StateBucket
+          STOP_TOPIC_ARN: !Ref StopTopic
+          BUDGET_NAME: !Ref BudgetName
+          DEADLINE_UTC: !Ref DeadlineUtc
+  GuardRetry:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref GuardFunction
+      Qualifier: '$LATEST'
+      MaximumEventAgeInSeconds: 3600
+      MaximumRetryAttempts: 2
+  BudgetPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GuardFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref StopTopic
+      SourceAccount: !Ref AWS::AccountId
+  StopSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: BudgetPermission
+    Properties:
+      Protocol: lambda
+      TopicArn: !Ref StopTopic
+      Endpoint: !GetAtt GuardFunction.Arn
+  DeadlineGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+  DeadlineRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: The deadline can invoke the guard, never the application functions directly.
+        must:
+        - Scheduler trust is scoped to the dedicated schedule group and this account.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: scheduler.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount: !Ref AWS::AccountId
+            ArnEquals:
+              aws:SourceArn: !GetAtt DeadlineGroup.Arn
+      Policies:
+      - PolicyName: InvokeGuard
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: !GetAtt GuardFunction.Arn
+          - Effect: Allow
+            Action: sqs:SendMessage
+            Resource: !GetAtt FailureQueue.Arn
+  DeadlineSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      GroupName: !Ref DeadlineGroup
+      ScheduleExpression: !Ref DeadlineExpression
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State: ENABLED
+      Target:
+        Arn: !GetAtt GuardFunction.Arn
+        RoleArn: !GetAtt DeadlineRole.Arn
+        Input: '{"action":"pause","source":"deadline"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 10
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn: !GetAtt FailureQueue.Arn
+Outputs:
+  GuardFunctionArn:
+    Value: !GetAtt GuardFunction.Arn
+  StateBucket:
+    Value: !Ref StateBucket
+  StopTopicArn:
+    Value: !Ref StopTopic
+  DeadlineScheduleName:
+    Value: !Ref DeadlineSchedule
+  DeadlineScheduleGroup:
+    Value: !Ref DeadlineGroup
+  BudgetName:
+    Value: !Ref BudgetName
+  DeadlineUtc:
+    Value: !Ref DeadlineUtc
+  FailureQueueUrl:
+    Value: !Ref FailureQueue
