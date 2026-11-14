@@ -73,7 +73,7 @@ describe('SourceListPage', () => {
 
   it('blocks a web source without a valid URL or with invalid headers', async () => {
     const dialog = await openDialog();
-    chooseKind(dialog, 'Trang web tĩnh');
+    chooseKind(dialog, 'Trang web');
     const url = await within(dialog).findByLabelText('Địa chỉ URL');
     fireEvent.change(url, { target: { value: 'file:///etc/passwd' } });
     fireEvent.change(within(dialog).getByLabelText('Header HTTP (JSON)'), { target: { value: '["x"]' } });
@@ -85,8 +85,8 @@ describe('SourceListPage', () => {
 
   it('requires an explicit tax basis and accepts the Phuc Hy homepage URL', async () => {
     const dialog = await openDialog();
-    chooseKind(dialog, 'Trang web tĩnh');
-    expect(await within(dialog).findByText(/https:\/\/phuchy.vn\/ để lấy tối đa 10 sản phẩm/)).toBeInTheDocument();
+    chooseKind(dialog, 'Trang web');
+    expect(await within(dialog).findByText(/Nhập URL trang chủ, danh mục hoặc sản phẩm/)).toBeInTheDocument();
     fireEvent.change(await within(dialog).findByLabelText('Địa chỉ URL'), { target: { value: 'https://phuchy.vn/' } });
     submit(dialog);
     expect(await within(dialog).findByText('Chọn cách tính thuế của giá nguồn.')).toBeInTheDocument();

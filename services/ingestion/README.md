@@ -26,7 +26,8 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
    - Xử lý job từ `WebQueue`.
    - Thu thập HTML tĩnh được phép qua HTTP.
    - Hỗ trợ URL chi tiết sản phẩm có Product microdata (`meta` SKU/giá/tiền tệ) hoặc JSON-LD Product/Offer. Cấu hình `price_basis` trên nguồn làm mặc định khi HTML không có cách tính thuế; xem [hướng dẫn URL sản phẩm](../../docs/web-product-url.md).
-   - Với `https://phuchy.vn/`, tự lấy tối đa 10 sản phẩm đầu từ các liên kết trên trang chủ, bỏ liên kết trùng và mở trang chi tiết để lấy SKU/giá. Tất cả thuộc một nguồn; chỉ gửi dữ liệu sau khi đã lưu đủ snapshot.
+   - Với trang chủ/danh mục của nhiều website, tự tìm tối đa 10 liên kết sản phẩm cùng origin và đọc SKU/giá từ HTML. Khi không có liên kết, hỗ trợ thêm feed `products.json` công khai của Haravan/Shopify nếu có metadata tiền tệ gốc. Giữ riêng từng SKU biến thể; không tự chọn giá thấp nhất. Đã thử đọc local với Phục Hy và Thiên Long; không cam kết mọi website đều hỗ trợ. Tất cả thuộc một nguồn; chỉ gửi dữ liệu sau khi đã lưu đủ snapshot. Xem giới hạn trong hướng dẫn URL ở trên.
+   - Nhận link tên sách dạng slug từ các thẻ sản phẩm (bao gồm Kim Đồng/Sapo). Với trang chủ Fahasa, đọc GET danh sách JSON của tab sản phẩm đầu, rồi mở tối đa 10 URL chi tiết cùng origin để lấy SKU thực và Offer giá bán/tiền tệ. Đã thử local cả hai trang chủ trả 10 SKU; không thực thi JavaScript và không gọi endpoint khách hàng/đăng nhập. Lỗi feed được trả bằng mã `invalid_fahasa_product_feed`, không báo thành công một phần.
    - Bóc tách bảng dữ liệu giá hoặc thẻ sản phẩm có `data-*` attribute bằng bộ phân tích chuẩn `HTMLTablePriceParser`.
    - Nhận dạng một số tên cột SKU/giá tiếng Việt và tiếng Anh; ưu tiên giá khuyến mãi khi đang áp dụng, chuẩn hóa cách ghi giá phổ biến và dùng thời điểm job thu thập nếu nguồn không có thời điểm.
    - Kiểm tra giới hạn dung lượng, số dòng và cô lập tenant.
