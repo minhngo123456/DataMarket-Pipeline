@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from marketdata.contracts import InvalidRecord, iso, timestamp
+from marketdata.product_metadata import product_metadata
 
 
 def sku(value):
@@ -67,4 +68,7 @@ def normalize(raw, source, now):
         raise InvalidRecord("converted_price_must_be_positive")
     if fx:
         result["fx"] = {"rate": str(fx["rate"]), "effective_date": fx["effective_date"]}
+    result.update(product_metadata(raw))
+    if source.get("kind") != "web":
+        result.pop("extraction_method", None)
     return result

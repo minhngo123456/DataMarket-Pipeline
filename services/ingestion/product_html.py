@@ -5,6 +5,7 @@ from decimal import Decimal
 from html.parser import HTMLParser
 
 from marketdata.contracts import InvalidRecord
+from marketdata.product_metadata import product_metadata
 
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
@@ -31,6 +32,8 @@ def _product_rows(document):
                     "source_sku": offer.get("sku") or document.get("sku") or document.get("mpn"),
                     "price": offer.get("price"),
                     "currency": offer.get("priceCurrency"),
+                    "source_name": document.get("name"),
+                    "source_url": offer.get("url") or document.get("url"),
                 }
         for key in ("@graph", "itemListElement", "item", "mainEntity"):
             if key in document:
@@ -47,6 +50,7 @@ class ProductHTMLParser(HTMLParser):
         self.scripts = []
         self.script = None
         self.metadata = {}
+        self.title = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -77,6 +81,8 @@ class ProductHTMLParser(HTMLParser):
             self.handle_endtag(tag)
 
     def handle_data(self, data):
+        if any(entry[0] == "title" for entry in self.stack):
+            self.title.append(data)
         if self.script is not None:
             self.script.append(data)
         else:
@@ -132,9 +138,15 @@ class ProductHTMLParser(HTMLParser):
             if not all(isinstance(row.get(field), (str, int, float)) and not isinstance(row[field], bool)
                        and str(row[field]).strip() for field in ("source_sku", "price", "currency")):
                 continue
-            row = {key: canonical(key, str(value).strip()) for key, value in row.items()}
+            metadata = product_metadata(row)
+            row = {key: canonical(key, str(row[key]).strip()) for key in ("source_sku", "price", "currency")}
             key = row["source_sku"]
-            if key in unique and unique[key] != row:
+            if key in unique and any(unique[key][field] != row[field] for field in row):
                 raise InvalidRecord("ambiguous_html_product")
-            unique[key] = row
+            unique[key] = {**unique.get(key, {}), **row, **metadata}
+        if len(unique) == 1:
+            row = next(iter(unique.values()))
+            title = next(iter(self.metadata.get("og:title", [])), "") or "".join(self.title)
+            if "source_name" not in row and title:
+                row.update(product_metadata({"source_name": title}))
         return list(unique.values())

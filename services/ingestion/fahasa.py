@@ -91,7 +91,7 @@ def product_rows(data, url, normalize_price):
                     if not isinstance(href, str) or same_origin_url(url, href) != same_origin_url(url, url):
                         continue
                     candidates.append({"source_sku": next(iter(skus)), "price": offer.get("price"),
-                                       "currency": offer.get("priceCurrency")})
+                                       "currency": offer.get("priceCurrency"), "source_name": node.get("name")})
             for key in ("@graph", "mainEntity"):
                 if key in node:
                     walk(node[key])
@@ -103,7 +103,7 @@ def product_rows(data, url, normalize_price):
             continue
     # Reuse the normal structured-product validation and conflict detection.
     parser.products = []
-    parser.scripts = [json.dumps([{"@type": "Product", "sku": row["source_sku"], "offers": {
+    parser.scripts = [json.dumps([{"@type": "Product", "sku": row["source_sku"], "name": row.get("source_name"), "offers": {
         "@type": "Offer", "price": row["price"], "priceCurrency": row["currency"],
     }} for row in candidates])]
     parser.metadata = {}

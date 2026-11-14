@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 from marketdata.contracts import InvalidRecord
+from marketdata.product_metadata import product_metadata
 
 MAX_PRODUCTS = 10
 MAX_COLLECTION_SECONDS = 20
@@ -164,7 +165,7 @@ def storefront_feed(data, url, discovery):
     return base + "/products.json?page=1&limit=10", currency
 
 
-def parse_storefront_feed(data, currency, normalize_price):
+def parse_storefront_feed(data, currency, normalize_price, base_url=None):
     try:
         document = json.loads(data)
     except (ValueError, UnicodeError, RecursionError) as exc:
@@ -191,6 +192,11 @@ def parse_storefront_feed(data, currency, normalize_price):
                 raise InvalidRecord("invalid_html_price")
             price = format(Decimal(normalize_price(price)).normalize(), "f")
             row = {"source_sku": sku.strip(), "price": price, "currency": currency}
+            row.update(product_metadata({"source_name": product.get("title"),
+                                         "source_variant": variant.get("title")}))
+            handle = product.get("handle")
+            if base_url and isinstance(handle, str) and re.fullmatch(r"[a-zA-Z0-9_-]+", handle):
+                row.update(product_metadata({"source_url": same_origin_url(base_url, "/products/" + handle)}))
             if sku.strip() in rows and rows[sku.strip()] != row:
                 raise InvalidRecord("ambiguous_html_product")
             rows[sku.strip()] = row

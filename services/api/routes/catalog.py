@@ -5,6 +5,7 @@ import json
 from boto3.dynamodb.conditions import Key
 
 from marketdata.access import create_product
+from marketdata.product_metadata import product_metadata
 from marketdata.repository import DynamoStore, pk
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
@@ -42,6 +43,13 @@ def handle_get_products(event: dict, store: DynamoStore, auth: AuthContext) -> d
     if match_status in ("all", "pending", "rejected"):
         status_filter = None if match_status == "all" else match_status
         receipts = store.receipts(auth.tenant_id, status=status_filter)
+        # Recollection can describe older pending rows without rewriting their
+        # immutable price snapshots. Never borrow metadata across source lifetimes.
+        descriptions = {}
+        for r in sorted(receipts, key=lambda row: row.get("observed_at") or ""):
+            metadata = product_metadata(r)
+            if metadata.get("source_name"):
+                descriptions[(r.get("source_id"), r.get("source_generation"), r.get("source_sku"))] = metadata
         for r in receipts:
             if match_status == "all" and r["status"] == "accepted":
                 continue  # already in products catalog
@@ -53,7 +61,10 @@ def handle_get_products(event: dict, store: DynamoStore, auth: AuthContext) -> d
                 "currency": r.get("currency"),
                 "match_status": r["status"],
                 "source_id": r.get("source_id"),
+                **({"source_generation": r["source_generation"]} if r.get("source_generation") else {}),
                 "reason": r.get("reason"),
+                **descriptions.get((r.get("source_id"), r.get("source_generation"), r.get("source_sku")), {}),
+                **product_metadata(r),
             })
 
     return paginated(
