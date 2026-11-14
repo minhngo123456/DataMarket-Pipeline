@@ -2,7 +2,7 @@
 
 Kết quả kiểm thử cập nhật ngày 05/11 được tổng hợp trực tiếp bên dưới. Các kết quả ngày 01/11 và 04/11 được giữ làm lịch sử đối chiếu.
 
-Nhóm 07, học phần Điện toán đám mây, dự án MarketData Pipeline. Bản hợp nhất ngày 04/11/2026 nhận `origin/main` tại commit `39c18f1`, trên nhánh `codex/hoang-final-integration`. Các kết quả AWS ngày 01/11 bên dưới thuộc phiên bản trước khi hợp nhất, dựa trên commit `e67e066` và phần sửa local của Hoàng.
+Nhóm 07, học phần Điện toán đám mây, dự án MarketData Pipeline. Bản hợp nhất ngày 04/11/2026 nhận `origin/main` tại commit `39c18f1`, trên nhánh `hoang/final-integration`. Các kết quả AWS ngày 01/11 bên dưới thuộc phiên bản trước khi hợp nhất, dựa trên commit `e67e066` và phần sửa local của Hoàng.
 
 ## Hợp nhất ngày 04/11/2026
 
