@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from time import monotonic
 
 import boto3
 
@@ -17,6 +18,12 @@ from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
 from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
+from services.ingestion.phuc_hy import (
+    MAX_COLLECTION_SECONDS,
+    PRODUCT_TIMEOUT_SECONDS,
+    is_homepage,
+    product_urls,
+)
 from services.ingestion.product_html import ProductHTMLParser
 from services.ingestion.safe_http import open_public
 from services.ingestion.snapshot import SourceSnapshots
@@ -342,6 +349,39 @@ def parse_html_payload(data, observed_at=None, price_basis=None):
     return validated_rows
 
 
+def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fetcher=None):
+    """Read a normal HTML source, or the first ten Phuc Hy homepage products."""
+    fetch = fetcher or default_fetcher
+    started = monotonic()
+    observed_at = observed_at or iso(datetime.now(UTC))
+    data = fetch(url, headers=headers)
+    if not is_homepage(url):
+        return parse_html_payload(data, observed_at=observed_at, price_basis=price_basis)
+    if len(data) > MAX_BYTES:
+        raise InvalidRecord("html_response_exceeds_1_mib")
+    rows = {}
+    for product_url in product_urls(data):
+        remaining = MAX_COLLECTION_SECONDS - (monotonic() - started)
+        if remaining <= 0:
+            raise RetryableFetchError("web_homepage_timeout")
+        if fetch is default_fetcher:
+            product_data = fetch(
+                product_url, headers=headers, timeout=min(PRODUCT_TIMEOUT_SECONDS, remaining),
+            )
+        else:
+            # Injected fixture fetchers retain their existing (url, headers) contract.
+            product_data = fetch(product_url, headers=headers)
+        products = parse_html_payload(product_data, observed_at=observed_at, price_basis=price_basis)
+        if len(products) != 1:
+            raise InvalidRecord("ambiguous_html_product")
+        row = products[0]
+        key = row["source_sku"]
+        if key in rows and rows[key] != row:
+            raise InvalidRecord("ambiguous_html_product")
+        rows[key] = row
+    return list(rows.values())
+
+
 def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=None):
     fetch = fetcher or default_fetcher
 
@@ -390,12 +430,12 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
         url = current_source.get("url") or current_source.get("endpoint")
         if not url:
             raise InvalidRecord("missing_web_url")
-        raw_data = fetch(url, headers=current_source.get("headers"))
         # Source timestamps take precedence. Missing times use the job schedule
         # (or UTC now) once, then remain immutable in the persisted snapshot.
-        return parse_html_payload(
-            raw_data, observed_at=job.get("scheduled_at") or event.get("scheduled_at"),
-            price_basis=current_source.get("price_basis"),
+        return collect_html_rows(
+            url, headers=current_source.get("headers"),
+            observed_at=job.get("scheduled_at") or event.get("scheduled_at"),
+            price_basis=current_source.get("price_basis"), fetcher=fetch,
         )
 
     try:

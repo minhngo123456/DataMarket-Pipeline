@@ -13,7 +13,7 @@ const KINDS = [
   { value: 'web', label: 'Trang web tĩnh' },
 ];
 const MAX_SOURCES = 3;
-const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://shop.nha-cung-cap.vn/bang-gia' };
+const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://phuchy.vn/' };
 const COLLECTION_STATUS = {
   running: { color: 'processing', label: 'Đang thu thập' },
   retrying: { color: 'warning', label: 'Chờ thử lại' },
@@ -196,7 +196,7 @@ export function SourceListPage({ user }) {
             <>
               <Form.Item label="Địa chỉ URL" name="endpoint" rules={[{ required: true, message: 'Nhập địa chỉ URL.' }, { pattern: /^https?:\/\/[^\s/]+\S*$/i, message: 'URL phải bắt đầu bằng http:// hoặc https://.' }]}><Input placeholder={URL_PLACEHOLDER[kind]} /></Form.Item>
               {kind === 'web' && <>
-                <Alert type="info" showIcon title="Dùng URL sản phẩm có mã hàng, giá và tiền tệ trong HTML. Website chỉ tải giá bằng JavaScript chưa được hỗ trợ. SKU mới cần được duyệt trong Catalog." />
+                <Alert type="info" showIcon title="Phục Hy: nhập https://phuchy.vn/ để lấy tối đa 10 sản phẩm đầu trên trang chủ. Các website khác dùng URL sản phẩm có giá trong HTML. SKU mới cần được duyệt trong Catalog." />
                 <Form.Item label="Cách tính thuế của giá nguồn" name="price_basis" preserve={false} extra="Chọn theo thông tin của người bán. Chưa xác định thì giá chưa vào bảng so sánh." rules={[{ required: true, message: 'Chọn cách tính thuế của giá nguồn.' }]}>
                   <Select options={[
                     { value: 'tax_included', label: 'Giá đã gồm thuế' },

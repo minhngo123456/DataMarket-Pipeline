@@ -82,10 +82,11 @@ describe('SourceListPage', () => {
     expect(marketDataApi.createSource).not.toHaveBeenCalled();
   });
 
-  it('requires an explicit tax basis and sends it with a product URL', async () => {
+  it('requires an explicit tax basis and accepts the Phuc Hy homepage URL', async () => {
     const dialog = await openDialog();
     chooseKind(dialog, 'Trang web tĩnh');
-    fireEvent.change(await within(dialog).findByLabelText('Địa chỉ URL'), { target: { value: 'https://shop.example.invalid/products/paper' } });
+    expect(await within(dialog).findByText(/https:\/\/phuchy.vn\/ để lấy tối đa 10 sản phẩm/)).toBeInTheDocument();
+    fireEvent.change(await within(dialog).findByLabelText('Địa chỉ URL'), { target: { value: 'https://phuchy.vn/' } });
     submit(dialog);
     expect(await within(dialog).findByText('Chọn cách tính thuế của giá nguồn.')).toBeInTheDocument();
     expect(marketDataApi.createSource).not.toHaveBeenCalled();
@@ -94,7 +95,7 @@ describe('SourceListPage', () => {
     submit(dialog);
     await waitFor(() => expect(marketDataApi.createSource).toHaveBeenCalledWith({
       name: 'Đối thủ A', source_id: 'competitor-a', kind: 'web', enabled: true,
-      endpoint: 'https://shop.example.invalid/products/paper', price_basis: 'tax_excluded',
+      endpoint: 'https://phuchy.vn/', price_basis: 'tax_excluded',
     }));
   });
 

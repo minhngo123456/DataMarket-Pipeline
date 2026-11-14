@@ -9,7 +9,7 @@ from scripts.demo_source_pipeline import local_pipeline
 from services.ingestion.web_worker import parse_html_payload
 from tests.conftest import NOW
 
-FIXTURE = Path("tests/fixtures/product_metadata.html").read_bytes()
+FIXTURE = Path("tests/fixtures/product_metadata.html").read_bytes().replace(b"\r\n", b"\n")
 
 
 def jsonld(document):
