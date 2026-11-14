@@ -87,7 +87,7 @@ export function PriceMatrix({ matrix, products, sources, referenceSource = 'inte
         locale={{ emptyText: 'Chưa có giá nào trong 24 giờ qua.' }}
         onRow={(row) => ({ onClick: () => setHistoryProduct(row), className: 'clickable-row' })}
       />
-      <PriceHistoryModal product={historyProduct} sourceNames={sourceNames} onClose={() => setHistoryProduct(null)} />
+      <PriceHistoryModal product={historyProduct} sourceNames={sourceNames} priceBasis={matrix?.price_basis || 'tax_included'} onClose={() => setHistoryProduct(null)} />
     </div>
   );
 }

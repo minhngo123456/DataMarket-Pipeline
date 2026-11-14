@@ -25,6 +25,7 @@ Khu vực dành cho tiếp nhận dữ liệu từ các nguồn: CSV, REST API v
 4. **`web_worker.py`** (Hướng):
    - Xử lý job từ `WebQueue`.
    - Thu thập HTML tĩnh được phép qua HTTP.
+   - Hỗ trợ URL chi tiết sản phẩm có Product microdata (`meta` SKU/giá/tiền tệ) hoặc JSON-LD Product/Offer. Cấu hình `price_basis` trên nguồn làm mặc định khi HTML không có cách tính thuế; xem [hướng dẫn URL sản phẩm](../../docs/web-product-url.md).
    - Bóc tách bảng dữ liệu giá hoặc thẻ sản phẩm có `data-*` attribute bằng bộ phân tích chuẩn `HTMLTablePriceParser`.
    - Nhận dạng một số tên cột SKU/giá tiếng Việt và tiếng Anh; ưu tiên giá khuyến mãi khi đang áp dụng, chuẩn hóa cách ghi giá phổ biến và dùng thời điểm job thu thập nếu nguồn không có thời điểm.
    - Kiểm tra giới hạn dung lượng, số dòng và cô lập tenant.

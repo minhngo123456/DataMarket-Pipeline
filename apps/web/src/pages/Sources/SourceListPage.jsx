@@ -120,9 +120,9 @@ export function SourceListPage({ user }) {
     } catch {
       return; // antd already shows the field errors
     }
-    const { headers, ...values } = fields;
+    const { headers, price_basis, ...values } = fields;
     setSaving(true);
-    const payload = { ...values, enabled: true, ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
+    const payload = { ...values, enabled: true, ...(values.kind === 'web' ? { price_basis } : {}), ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
     const ok = await run(
       () => marketDataApi.createSource(payload),
       (list) => {
@@ -195,6 +195,16 @@ export function SourceListPage({ user }) {
           {(kind === 'api' || kind === 'web') && (
             <>
               <Form.Item label="Địa chỉ URL" name="endpoint" rules={[{ required: true, message: 'Nhập địa chỉ URL.' }, { pattern: /^https?:\/\/[^\s/]+\S*$/i, message: 'URL phải bắt đầu bằng http:// hoặc https://.' }]}><Input placeholder={URL_PLACEHOLDER[kind]} /></Form.Item>
+              {kind === 'web' && <>
+                <Alert type="info" showIcon title="Dùng URL sản phẩm có mã hàng, giá và tiền tệ trong HTML. Website chỉ tải giá bằng JavaScript chưa được hỗ trợ. SKU mới cần được duyệt trong Catalog." />
+                <Form.Item label="Cách tính thuế của giá nguồn" name="price_basis" preserve={false} extra="Chọn theo thông tin của người bán. Chưa xác định thì giá chưa vào bảng so sánh." rules={[{ required: true, message: 'Chọn cách tính thuế của giá nguồn.' }]}>
+                  <Select options={[
+                    { value: 'tax_included', label: 'Giá đã gồm thuế' },
+                    { value: 'tax_excluded', label: 'Giá chưa gồm thuế' },
+                    { value: 'unknown', label: 'Chưa xác định' },
+                  ]} />
+                </Form.Item>
+              </>}
               <Form.Item label="Header HTTP (JSON)" name="headers" extra={'Không bắt buộc. Ví dụ: {"User-Agent": "MarketData"}'} rules={[{ validator: validateHeaders }]}><Input.TextArea rows={3} /></Form.Item>
             </>
           )}
