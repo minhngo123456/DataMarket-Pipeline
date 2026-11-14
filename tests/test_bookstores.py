@@ -64,7 +64,8 @@ def test_each_homepage_collects_ten_actual_skus_and_exact_offer_prices(home, req
     rows = collect_html_rows(home, fetcher=fetch, observed_at=iso(NOW), price_basis="tax_included")
     assert len(rows) == 10 and len(calls) == requests
     assert rows[0] == {"source_sku": "8930000000000", "price": "100000" if home == FAHASA else "110000",
-                       "currency": "VND", "observed_at": iso(NOW), "price_basis": "tax_included"}
+                       "currency": "VND", "observed_at": iso(NOW), "price_basis": "tax_included",
+                       **({"source_url": KIMDONG + "sach-0"} if home == KIMDONG else {})}
     assert all(row["source_sku"] != str(i) for i, row in enumerate(rows))
 
 
