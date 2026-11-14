@@ -10,6 +10,7 @@ from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
 
 MASKED_HEADER_VALUE = "***"
+PRICE_BASES = ("tax_included", "tax_excluded", "unknown")
 PUBLIC_COLLECTION_FIELDS = (
     "collection_status", "last_job_id", "last_attempt_at", "last_success_at",
     "last_success_job_id", "last_success_job_at", "last_error_code",
@@ -23,6 +24,12 @@ def is_http_url(value) -> bool:
         return bool(parsed and parsed.scheme in ("http", "https") and parsed.hostname)
     except ValueError:
         return False
+
+
+def valid_price_basis(body, kind):
+    return "price_basis" not in body or (
+        kind == "web" and (body["price_basis"] is None or body["price_basis"] in PRICE_BASES)
+    )
 
 
 def visible_headers(headers: dict, auth: AuthContext) -> dict:
@@ -59,6 +66,8 @@ def handle_get_sources(event: dict, store: DynamoStore, auth: AuthContext) -> di
             "updated_at": s.get("updated_at"),
         }
         item.update({field: s[field] for field in PUBLIC_COLLECTION_FIELDS if s.get(field) is not None})
+        if s.get("price_basis") is not None:
+            item["price_basis"] = s["price_basis"]
         endpoint = s.get("endpoint") or s.get("url")
         url = s.get("url") or s.get("endpoint")
         if endpoint:
@@ -95,6 +104,9 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
             "source_id is required and kind must be one of: csv, api, web",
             400,
         )
+
+    if not valid_price_basis(body, kind):
+        return error("invalid_source_payload", "price_basis requires a web source and tax_included, tax_excluded or unknown", 400)
 
     endpoint = body.get("endpoint") or body.get("url")
     url = body.get("url") or body.get("endpoint")
@@ -136,6 +148,8 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         "url": str(url) if url else None,
         "headers": headers,
     }
+    if kind == "web":
+        source_item["price_basis"] = body.get("price_basis")
     store.update_source_configuration(
         auth.tenant_id, source_id, source_item, previous=current,
     )
@@ -153,6 +167,8 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         resp_data["url"] = str(url)
     if headers is not None:
         resp_data["headers"] = visible_headers(headers, auth)
+    if source_item.get("price_basis") is not None:
+        resp_data["price_basis"] = source_item["price_basis"]
 
     return ok(
         resp_data,
@@ -181,6 +197,9 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
     except json.JSONDecodeError:
         return error("invalid_json", "Request body must be valid JSON", 400)
 
+    if not valid_price_basis(body, existing.get("kind")):
+        return error("invalid_source_payload", "price_basis requires a web source and tax_included, tax_excluded or unknown", 400)
+
     if "enabled" in body and type(body["enabled"]) is not bool:
         return error("invalid_source_payload", "enabled must be a boolean", 400)
 
@@ -197,6 +216,8 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
         "enabled": body.get("enabled", existing.get("enabled", True)),
         "updated_at": iso(now),
     }
+    if "price_basis" in body:
+        updated["price_basis"] = body["price_basis"]
 
     if "endpoint" in body or "url" in body:
         new_endpoint = body.get("endpoint") or body.get("url")
@@ -230,6 +251,8 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
         resp_data["url"] = updated["url"]
     if "headers" in updated and updated["headers"] is not None:
         resp_data["headers"] = visible_headers(updated["headers"], auth)
+    if updated.get("price_basis") is not None:
+        resp_data["price_basis"] = updated["price_basis"]
 
     return ok(resp_data)
 

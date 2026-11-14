@@ -17,6 +17,7 @@ from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
 from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
+from services.ingestion.product_html import ProductHTMLParser
 from services.ingestion.safe_http import open_public
 from services.ingestion.snapshot import SourceSnapshots
 
@@ -287,7 +288,7 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
         raise RetryableFetchError(f"web_connection_error_{exc}") from exc
 
 
-def parse_html_payload(data, observed_at=None):
+def parse_html_payload(data, observed_at=None, price_basis=None):
     if len(data) > MAX_BYTES:
         raise InvalidRecord("html_response_exceeds_1_mib")
     fallback_observed_at = observed_at if observed_at is not None else iso(datetime.now(UTC))
@@ -305,6 +306,10 @@ def parse_html_payload(data, observed_at=None):
     except Exception as exc:
         raise InvalidRecord("invalid_html_syntax") from exc
 
+    if not parser.rows:
+        products = ProductHTMLParser()
+        products.feed(html_str)
+        parser.rows = products.rows(_normalize_price)
     if not parser.rows:
         raise InvalidRecord("empty_or_unparseable_html_table")
     if len(parser.rows) > 1000:
@@ -329,10 +334,9 @@ def parse_html_payload(data, observed_at=None):
             "currency": str(_present_value(row.get("currency")) or "VND").upper(),
             "observed_at": normalized_observed_at,
         }
-        if "price_basis" in row:
-            price_basis = _present_value(row["price_basis"])
-            if price_basis:
-                cleaned["price_basis"] = price_basis
+        row_basis = _present_value(row.get("price_basis")) or price_basis
+        if row_basis:
+            cleaned["price_basis"] = row_basis
         validated_rows.append(cleaned)
 
     return validated_rows
@@ -390,7 +394,8 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
         # Source timestamps take precedence. Missing times use the job schedule
         # (or UTC now) once, then remain immutable in the persisted snapshot.
         return parse_html_payload(
-            raw_data, observed_at=job.get("scheduled_at") or event.get("scheduled_at")
+            raw_data, observed_at=job.get("scheduled_at") or event.get("scheduled_at"),
+            price_basis=current_source.get("price_basis"),
         )
 
     try:
