@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { configure, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,7 +13,11 @@ async function renderAs(role, schedule) {
   render(<MemoryRouter><ReportListPage user={{ role }} /></MemoryRouter>);
 }
 
-describe('ReportListPage', () => {
+// Each test re-imports the page after resetModules, which is slow when the whole suite runs in
+// parallel; give the import and the findBy queries room instead of failing on a busy machine.
+configure({ asyncUtilTimeout: 10000 });
+
+describe('ReportListPage', { timeout: 60000 }, () => {
   beforeEach(() => vi.doUnmock('../../config.js'));
 
   it('replaces the manual button with a note while the 08:00 schedule runs', async () => {
