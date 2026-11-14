@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-11-13T15:40:00Z",
+  "note": "Giá niêm yết trên trang danh mục của từng cửa hàng lúc thu thập (VND, đã gồm VAT). null: cửa hàng không bán đúng phiên bản này.",
+  "sources": {
+    "vendor-a": {"name": "Thế Giới Di Động", "url": "https://www.thegioididong.com/dtdd"},
+    "vendor-b": {"name": "CellphoneS", "url": "https://cellphones.com.vn/mobile.html"},
+    "vendor-c": {"name": "FPT Shop", "url": "https://fptshop.com.vn/dien-thoai"}
+  },
+  "products": [
+    {"sku": "IP18PM-256", "name": "iPhone 18 Pro Max 256GB", "prices": {"vendor-a": 41990000, "vendor-b": 41990000, "vendor-c": 41990000}},
+    {"sku": "IP18P-256", "name": "iPhone 18 Pro 256GB", "prices": {"vendor-a": 38990000, "vendor-b": 38690000, "vendor-c": 38990000}},
+    {"sku": "IP17PM-256", "name": "iPhone 17 Pro Max 256GB", "prices": {"vendor-a": 34990000, "vendor-b": 34990000, "vendor-c": 34990000}},
+    {"sku": "IP17P-256", "name": "iPhone 17 Pro 256GB", "prices": {"vendor-a": 31990000, "vendor-b": 31990000, "vendor-c": 31990000}},
+    {"sku": "IP17-256", "name": "iPhone 17 256GB", "prices": {"vendor-a": 28990000, "vendor-b": 28490000, "vendor-c": 28490000}},
+    {"sku": "IPAIR-256", "name": "iPhone Air 256GB", "prices": {"vendor-a": 22990000, "vendor-b": 23390000, "vendor-c": 22990000}},
+    {"sku": "IP17E-256", "name": "iPhone 17e 256GB", "prices": {"vendor-a": 21990000, "vendor-b": null, "vendor-c": 20990000}},
+    {"sku": "IP16-128", "name": "iPhone 16 128GB", "prices": {"vendor-a": 24990000, "vendor-b": null, "vendor-c": 24490000}},
+    {"sku": "IP16E-128", "name": "iPhone 16e 128GB", "prices": {"vendor-a": 15990000, "vendor-b": 14290000, "vendor-c": 18990000}},
+    {"sku": "IP15-128", "name": "iPhone 15 128GB", "prices": {"vendor-a": 21990000, "vendor-b": 21490000, "vendor-c": 21490000}},
+    {"sku": "S26U-256", "name": "Samsung Galaxy S26 Ultra 12GB/256GB", "prices": {"vendor-a": 31990000, "vendor-b": 31990000, "vendor-c": 31990000}},
+    {"sku": "S26-256", "name": "Samsung Galaxy S26 12GB/256GB", "prices": {"vendor-a": 20990000, "vendor-b": 20990000, "vendor-c": 20990000}},
+    {"sku": "S26FE-128", "name": "Samsung Galaxy S26 FE 8GB/128GB", "prices": {"vendor-a": 15490000, "vendor-b": 16090000, "vendor-c": 15490000}},
+    {"sku": "S25U-256", "name": "Samsung Galaxy S25 Ultra 12GB/256GB", "prices": {"vendor-a": 25890000, "vendor-b": 25490000, "vendor-c": 25490000}},
+    {"sku": "ZFLIP8-256", "name": "Samsung Galaxy Z Flip8 12GB/256GB", "prices": {"vendor-a": 26990000, "vendor-b": 26990000, "vendor-c": 26990000}},
+    {"sku": "ZFOLD8U-256", "name": "Samsung Galaxy Z Fold8 Ultra 12GB/256GB", "prices": {"vendor-a": 47490000, "vendor-b": 47990000, "vendor-c": 47490000}},
+    {"sku": "RN17-5G-128", "name": "Xiaomi Redmi Note 17 5G 6GB/128GB", "prices": {"vendor-a": 8690000, "vendor-b": 8690000, "vendor-c": 8690000}},
+    {"sku": "RN17PM-512", "name": "Xiaomi Redmi Note 17 Pro Max 8GB/512GB", "prices": {"vendor-a": null, "vendor-b": 16690000, "vendor-c": 16690000}},
+    {"sku": "FINDX9U-512", "name": "OPPO Find X9 Ultra 12GB/512GB", "prices": {"vendor-a": 49990000, "vendor-b": 45990000, "vendor-c": 45990000}},
+    {"sku": "RENO16F-256", "name": "OPPO Reno16 F 8GB/256GB", "prices": {"vendor-a": null, "vendor-b": 15690000, "vendor-c": 15690000}}
+  ]
+}
