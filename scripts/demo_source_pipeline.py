@@ -105,6 +105,7 @@ class _LocalPipeline:
             patch("services.api.routes.matrix.datetime", FixedClock),
             patch("services.api.routes.history.datetime", FixedClock),
             patch("services.api.routes.pending.datetime", FixedClock),
+            patch("services.api.routes.sources.datetime", FixedClock),
         ):
             response = api_handler(event, store=self.store)
         return response["statusCode"], json.loads(response["body"])

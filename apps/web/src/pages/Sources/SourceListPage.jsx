@@ -1,6 +1,6 @@
 import { DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Form, Input, Modal, Popconfirm, Select, Switch, Table, Tag, message } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LoadError, PageHeading } from '../../components/PageHeading.jsx';
 import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
 import { mockSources } from '../../mocks/data.js';
@@ -15,6 +15,7 @@ const KINDS = [
 const MAX_SOURCES = 3;
 const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://phuchy.vn/' };
 const COLLECTION_STATUS = {
+  queued: { color: 'processing', label: 'Chờ xử lý' },
   running: { color: 'processing', label: 'Đang thu thập' },
   retrying: { color: 'warning', label: 'Chờ thử lại' },
   succeeded: { color: 'success', label: 'Đã thu thập' },
@@ -73,6 +74,8 @@ export function SourceListPage({ user }) {
   const sources = useApiData(() => marketDataApi.getSources(), mockSources);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [collecting, setCollecting] = useState(null);
+  const [pollUntil, setPollUntil] = useState(() => Date.now() + 120000);
   const [form] = Form.useForm();
   const kind = Form.useWatch('kind', form);
   const role = user?.role;
@@ -80,15 +83,28 @@ export function SourceListPage({ user }) {
   const rows = sources.data?.data || [];
   const limit = Math.min(user?.tenant?.max_sources ?? MAX_SOURCES, MAX_SOURCES);
 
-  const run = async (action, mockUpdate, success) => {
+  useEffect(() => {
+    if (sources.isMock || sources.loading || sources.error || Date.now() >= pollUntil
+      || !(sources.data?.data || []).some((s) => ['queued', 'running', 'retrying'].includes(s.collection_status))) return undefined;
+    const timer = setTimeout(sources.reload, 3000);
+    return () => clearTimeout(timer);
+  }, [sources.data, sources.loading, sources.error, sources.isMock, sources.reload, pollUntil]);
+
+  const run = async (action, mockUpdate, success, collectExpected = false) => {
+    let result;
     try {
       if (sources.isMock) {
         sources.setData((data) => ({ ...data, data: mockUpdate(data.data) }));
       } else {
-        await action();
+        result = await action();
+        if (collectExpected && (!result?.job_id || result.collection_status !== 'queued')) {
+          sources.reload();
+          throw new Error('Nguồn đã lưu nhưng backend chưa xác nhận job thu thập. Cần cập nhật API và template trước khi thử lại.');
+        }
+        if (result?.job_id) setPollUntil(Date.now() + 120000);
         sources.reload();
       }
-      message.success(success);
+      message.success(result?.collection_status === 'queued' ? 'Đã gửi yêu cầu thu thập ngay. Trạng thái sẽ tự cập nhật.' : success);
       return true;
     } catch (error) {
       if (error?.response?.status === 409) {
@@ -96,16 +112,29 @@ export function SourceListPage({ user }) {
         message.warning('Thao tác xung đột với cấu hình nguồn hiện tại. Đang tải lại danh sách; hãy kiểm tra trước khi thử lại.');
       } else {
         message.error(apiErrorMessage(error, 'Không lưu được nguồn.'));
+        if (error?.response?.data?.error?.details?.source_saved) sources.reload();
       }
       return false;
     }
   };
 
   const toggle = (source, enabled) => run(
-    () => marketDataApi.updateSource(source.source_id, { enabled }),
+    () => marketDataApi.updateSource(source.source_id, { enabled, ...(enabled && ['api', 'web'].includes(source.kind) ? { collect_now: true } : {}) }),
     (list) => list.map((s) => (s.source_id === source.source_id ? { ...s, enabled, updated_at: new Date().toISOString() } : s)),
     enabled ? `Đã bật ${source.name}.` : `Đã tắt ${source.name}.`,
+    enabled && ['api', 'web'].includes(source.kind),
   );
+
+  const collect = async (source) => {
+    setCollecting(source.source_id);
+    await run(
+      () => marketDataApi.updateSource(source.source_id, { collect_now: true }),
+      (list) => list,
+      'Đã gửi yêu cầu thu thập.',
+      true,
+    );
+    setCollecting(null);
+  };
 
   const remove = (source) => run(
     () => marketDataApi.deleteSource(source.source_id),
@@ -122,7 +151,7 @@ export function SourceListPage({ user }) {
     }
     const { headers, price_basis, ...values } = fields;
     setSaving(true);
-    const payload = { ...values, enabled: true, ...(values.kind === 'web' ? { price_basis } : {}), ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
+    const payload = { ...values, enabled: true, ...(['api', 'web'].includes(values.kind) ? { collect_now: true } : {}), ...(values.kind === 'web' ? { price_basis } : {}), ...(headers?.trim() ? { headers: parseHeaders(headers) } : {}) };
     const ok = await run(
       () => marketDataApi.createSource(payload),
       (list) => {
@@ -132,6 +161,7 @@ export function SourceListPage({ user }) {
           : [...list, source];
       },
       `Đã lưu ${values.name}.`,
+      payload.collect_now,
     );
     setSaving(false);
     if (ok) {
@@ -147,6 +177,12 @@ export function SourceListPage({ user }) {
     { title: 'THU THẬP', key: 'collection', width: 220, render: (_, row) => <CollectionStatus source={row} /> },
     { title: 'LỊCH SỬ THU THẬP', key: 'collection_history', width: 190, render: (_, row) => <CollectionHistory source={row} /> },
     { title: 'SỬA CẤU HÌNH', dataIndex: 'updated_at', key: 'updated_at', width: 140, render: (v) => <span title={formatDateTime(v)}>{timeAgo(v)}</span> },
+    ...(canEdit ? [{
+      title: 'THU THẬP', key: 'collect_now', width: 150,
+      render: (_, row) => ['api', 'web'].includes(row.kind) && row.enabled !== false ? (
+        <Button size="small" loading={collecting === row.source_id} disabled={['queued', 'running', 'retrying'].includes(row.collection_status)} onClick={() => collect(row)} aria-label={`Thu thập ${row.name}`}>Thu thập ngay</Button>
+      ) : null,
+    }] : []),
     {
       title: 'BẬT',
       dataIndex: 'enabled',
@@ -173,7 +209,7 @@ export function SourceListPage({ user }) {
       <PageHeading
         eyebrow="KẾT NỐI VÀ ĐỒNG BỘ"
         title="Nguồn dữ liệu"
-        description={`Gói Pilot cho tối đa ${limit} nguồn. Nguồn API và web được thu thập 6 giờ một lần.`}
+        description={`Gói Pilot cho tối đa ${limit} nguồn. API và web được thu thập ngay khi lưu hoặc bật nguồn, sau đó theo lịch 6 giờ.`}
         actions={<>
           <Button icon={<ReloadOutlined />} loading={sources.loading} disabled={sources.loading} onClick={sources.reload}>Làm mới</Button>
           {canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={rows.length >= limit} onClick={() => setOpen(true)}>Thêm nguồn</Button>}
@@ -184,7 +220,7 @@ export function SourceListPage({ user }) {
       <p className="source-collection-note">“Đã thu thập” nghĩa là đã đọc nguồn và gửi dữ liệu để chuẩn hóa, chưa xác nhận các dòng đã được chấp nhận. Thời gian hiển thị theo giờ Việt Nam (UTC+7).</p>
       <Card className="panel-card table-panel" variant="borderless">
         {sources.error ? <LoadError error={apiErrorMessage(sources.error)} onRetry={sources.reload} /> : (
-          <Table columns={columns} dataSource={rows} rowKey="source_id" loading={sources.loading} pagination={false} scroll={{ x: 1186 }} locale={{ emptyText: 'Chưa cấu hình nguồn nào.' }} />
+          <Table columns={columns} dataSource={rows} rowKey="source_id" loading={sources.loading} pagination={false} scroll={{ x: 1336 }} locale={{ emptyText: 'Chưa cấu hình nguồn nào.' }} />
         )}
       </Card>
       <Modal title="Thêm nguồn dữ liệu" open={open} okText="Thêm" cancelText="Hủy" confirmLoading={saving} onOk={create} onCancel={() => setOpen(false)} destroyOnHidden>

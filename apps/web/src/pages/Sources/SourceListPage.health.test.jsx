@@ -31,6 +31,7 @@ describe('SourceListPage collection health', () => {
       [makeSource('null-state', { collection_status: null }), 'Chưa thu thập'],
       [makeSource('empty-state', { collection_status: '' }), 'Chưa thu thập'],
       [makeSource('running', { collection_status: 'running' }), 'Đang thu thập'],
+      [makeSource('queued', { collection_status: 'queued' }), 'Chờ xử lý'],
       [makeSource('retrying', { collection_status: 'retrying' }), 'Chờ thử lại'],
       [makeSource('succeeded', { collection_status: 'succeeded' }), 'Đã thu thập'],
       [makeSource('failed', { collection_status: 'failed' }), 'Thu thập lỗi'],
