@@ -223,7 +223,7 @@ Các thay đổi `/sources` dưới đây đã được chuẩn bị trong code 
 
 | Trường health công khai, chỉ có khi server đã lưu giá trị | Ý nghĩa |
 | --- | --- |
-| `collection_status` | `running`, `retrying`, `succeeded` hoặc `failed`. Chưa có thì UI hiển thị “Chưa thu thập”. |
+| `collection_status` | `queued`, `running`, `retrying`, `succeeded` hoặc `failed`. Queued hiển thị “Chờ xử lý”; chưa có thì UI hiển thị “Chưa thu thập”. |
 | `last_job_id` | Job của lần thu thập hiện tại. |
 | `last_attempt_at` | Lần bắt đầu xử lý đầu tiên của job, UTC ISO 8601; không đổi qua retry cùng job. |
 | `last_success_at` | Mốc server xác nhận enqueue thành công; giữ lại khi job sau lỗi. |
@@ -241,6 +241,8 @@ Client không được tự ghi health. `source_generation`, `source_config_revi
 
 #### 5. `POST /sources`
 Tạo nguồn dữ liệu mới, hoặc thay cấu hình được hỗ trợ của nguồn đã tồn tại cùng `source_id` và cùng `kind`. Giới hạn tối đa 3 nguồn vẫn áp dụng khi thêm nguồn mới; cập nhật nguồn cùng ID không tạo thêm nguồn.
+
+Giao diện gửi `collect_now:true` cho nguồn API/Web để tạo job ngay sau khi lưu, không đợi lịch. Response 201 bổ sung `job_id`, `collection_status:"queued"`; không đồng nghĩa đã lấy giá xong. Client API cũ bỏ trường hoặc false chỉ lưu cấu hình. Giá trị khác boolean, nguồn CSV, nguồn đang tắt hoặc không có URL khi yêu cầu collect_now bị từ chối. Thiếu cấu hình queue trả 503 trước khi lưu; gửi SQS lỗi trả 503 kèm `error.details.source_saved=true` để client tải lại nguồn và thử lại, không báo success giả.
 - **Role:** Admin, Analyst
 - **Request Body (Nguồn API hoặc Web):**
 ```json
@@ -303,6 +305,8 @@ Tạo nguồn dữ liệu mới, hoặc thay cấu hình được hỗ trợ c�
 
 #### 6. `PATCH /sources/:id`
 Bật/tắt, sửa tên hoặc cập nhật endpoint, url, headers cho nguồn dữ liệu.
+
+`PATCH /sources/:id` với `{"collect_now":true}` tạo một job mới cho nguồn API/Web đang bật mà không cần đổi URL. UI dùng thao tác này cho nút Thu thập ngay và gửi kèm khi bật lại nguồn. Response 200 bổ sung job_id/collection_status queued; quyền vẫn giới hạn Admin/Analyst và tenant hiện tại. Lịch định kỳ độc lập, không bị bật/tắt bởi thao tác này.
 - **Role:** Admin, Analyst
 - Chỉ cập nhật các trường cấu hình được hỗ trợ, giữ health và cấu hình không có trong request; `headers:null` xóa cấu hình header. Không hỗ trợ đổi kind qua PATCH.
 - `enabled` khi có mặt phải là JSON boolean; giá trị sai trả 400 `invalid_source_payload` và không ghi thay đổi. Nếu thiếu, giữ trạng thái bật/tắt hiện tại.

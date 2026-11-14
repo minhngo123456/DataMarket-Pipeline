@@ -8,6 +8,7 @@ from marketdata.contracts import AccessDenied, QuotaExceeded, identifier, iso
 from marketdata.repository import DynamoStore
 from services.api.auth import AuthContext
 from services.api.response import error, ok, paginated
+from services.api.source_collection import collection_queue, enqueue_collection
 
 MASKED_HEADER_VALUE = "***"
 PRICE_BASES = ("tax_included", "tax_excluded", "unknown")
@@ -122,6 +123,8 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
             400,
         )
 
+    queue = collection_queue(body, kind, enabled, endpoint or url)
+
     source_id = identifier(source_id)
     current = store.get(auth.tenant_id, "SOURCE#" + source_id)
     if headers is not None:
@@ -150,7 +153,7 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
     }
     if kind == "web":
         source_item["price_basis"] = body.get("price_basis")
-    store.update_source_configuration(
+    saved = store.update_source_configuration(
         auth.tenant_id, source_id, source_item, previous=current,
     )
 
@@ -169,6 +172,8 @@ def handle_post_sources(event: dict, store: DynamoStore, auth: AuthContext) -> d
         resp_data["headers"] = visible_headers(headers, auth)
     if source_item.get("price_basis") is not None:
         resp_data["price_basis"] = source_item["price_basis"]
+    if queue:
+        resp_data.update(enqueue_collection(store, auth.tenant_id, saved, queue))
 
     return ok(
         resp_data,
@@ -235,6 +240,10 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
         else:
             updated["headers"] = restore_masked_headers(body["headers"], existing.get("headers"))
 
+    effective = {**existing, **updated}
+    queue = collection_queue(
+        body, existing["kind"], effective.get("enabled"), effective.get("endpoint") or effective.get("url"),
+    )
     updated = store.update_source_configuration(
         auth.tenant_id, source_id, updated, previous=existing,
     )
@@ -253,6 +262,8 @@ def handle_patch_source(event: dict, store: DynamoStore, auth: AuthContext) -> d
         resp_data["headers"] = visible_headers(updated["headers"], auth)
     if updated.get("price_basis") is not None:
         resp_data["price_basis"] = updated["price_basis"]
+    if queue:
+        resp_data.update(enqueue_collection(store, auth.tenant_id, updated, queue))
 
     return ok(resp_data)
 
