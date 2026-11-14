@@ -15,23 +15,26 @@ import boto3
 from marketdata.contracts import AccessDenied, InvalidRecord, identifier, iso, timestamp
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
+from services.ingestion import fahasa
 from services.ingestion.batch import process_source_batch
 from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
-from services.ingestion.phuc_hy import (
-    MAX_COLLECTION_SECONDS,
-    PRODUCT_TIMEOUT_SECONDS,
-    is_homepage,
-    product_urls,
-)
 from services.ingestion.product_html import ProductHTMLParser
 from services.ingestion.safe_http import open_public
 from services.ingestion.snapshot import SourceSnapshots
+from services.ingestion.storefront import (
+    MAX_COLLECTION_SECONDS,
+    PRODUCT_TIMEOUT_SECONDS,
+    discover,
+    is_product_url,
+    parse_storefront_feed,
+    storefront_feed,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-MAX_BYTES = 1024 * 1024
+MAX_BYTES = 10 * 1024 * 1024
 TIMEOUT_SECONDS = 10
 
 HEADER_MAPPING = {
@@ -285,7 +288,7 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
         with open_public(req, timeout=timeout) as response:
             data = response.read(MAX_BYTES + 1)
             if len(data) > MAX_BYTES:
-                raise InvalidRecord("html_response_exceeds_1_mib")
+                raise InvalidRecord("html_response_exceeds_10_mib")
             return data
     except urllib.error.HTTPError as exc:
         raise http_error_to_exception(exc, "web") from exc
@@ -295,9 +298,9 @@ def default_fetcher(url, headers=None, timeout=TIMEOUT_SECONDS):
         raise RetryableFetchError(f"web_connection_error_{exc}") from exc
 
 
-def parse_html_payload(data, observed_at=None, price_basis=None):
+def parse_html_payload(data, observed_at=None, price_basis=None, url=None):
     if len(data) > MAX_BYTES:
-        raise InvalidRecord("html_response_exceeds_1_mib")
+        raise InvalidRecord("html_response_exceeds_10_mib")
     fallback_observed_at = observed_at if observed_at is not None else iso(datetime.now(UTC))
     try:
         html_str = data.decode("utf-8")
@@ -317,6 +320,8 @@ def parse_html_payload(data, observed_at=None, price_basis=None):
         products = ProductHTMLParser()
         products.feed(html_str)
         parser.rows = products.rows(_normalize_price)
+    if not parser.rows and url:
+        parser.rows = fahasa.product_rows(data, url, _normalize_price)
     if not parser.rows:
         raise InvalidRecord("empty_or_unparseable_html_table")
     if len(parser.rows) > 1000:
@@ -350,35 +355,73 @@ def parse_html_payload(data, observed_at=None, price_basis=None):
 
 
 def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fetcher=None):
-    """Read a normal HTML source, or the first ten Phuc Hy homepage products."""
+    """Read prices directly, then discover products or a public storefront feed."""
     fetch = fetcher or default_fetcher
     started = monotonic()
     observed_at = observed_at or iso(datetime.now(UTC))
     data = fetch(url, headers=headers)
-    if not is_homepage(url):
-        return parse_html_payload(data, observed_at=observed_at, price_basis=price_basis)
-    if len(data) > MAX_BYTES:
-        raise InvalidRecord("html_response_exceeds_1_mib")
-    rows = {}
-    for product_url in product_urls(data):
+    try:
+        return parse_html_payload(data, observed_at=observed_at, price_basis=price_basis, url=url)
+    except InvalidRecord as exc:
+        if str(exc) != "empty_or_unparseable_html_table":
+            raise
+
+    discovery = discover(data, url)
+    urls = discovery.products()
+
+    def fetch_next(target):
         remaining = MAX_COLLECTION_SECONDS - (monotonic() - started)
         if remaining <= 0:
             raise RetryableFetchError("web_homepage_timeout")
         if fetch is default_fetcher:
-            product_data = fetch(
-                product_url, headers=headers, timeout=min(PRODUCT_TIMEOUT_SECONDS, remaining),
+            result = fetch(
+                target, headers=headers, timeout=min(PRODUCT_TIMEOUT_SECONDS, remaining),
             )
         else:
-            # Injected fixture fetchers retain their existing (url, headers) contract.
-            product_data = fetch(product_url, headers=headers)
-        products = parse_html_payload(product_data, observed_at=observed_at, price_basis=price_basis)
-        if len(products) != 1:
-            raise InvalidRecord("ambiguous_html_product")
-        row = products[0]
-        key = row["source_sku"]
-        if key in rows and rows[key] != row:
-            raise InvalidRecord("ambiguous_html_product")
-        rows[key] = row
+            result = fetch(target, headers=headers)
+        if len(result) > MAX_BYTES:
+            raise InvalidRecord("html_response_exceeds_10_mib")
+        if monotonic() - started > MAX_COLLECTION_SECONDS:
+            raise RetryableFetchError("web_homepage_timeout")
+        return result
+
+    def read_feed():
+        feed = storefront_feed(data, url, discovery)
+        if not feed:
+            raise InvalidRecord("html_products_not_found")
+        feed_url, currency = feed
+        products = parse_storefront_feed(fetch_next(feed_url), currency, _normalize_price)
+        for row in products:
+            row["observed_at"] = observed_at
+            if price_basis:
+                row["price_basis"] = price_basis
+        return products
+
+    if fahasa.is_homepage(url):
+        urls = fahasa.product_urls(fetch_next(fahasa.homepage_feed(data, url)), url)
+    elif fahasa.is_product_url(url):
+        raise InvalidRecord("html_products_not_found")
+    if not urls or is_product_url(url):
+        return read_feed()
+
+    rows = {}
+    for index, product_url in enumerate(urls):
+        product_data = fetch_next(product_url)
+        try:
+            products = parse_html_payload(product_data, observed_at=observed_at, price_basis=price_basis, url=product_url)
+        except InvalidRecord as exc:
+            # A theme may expose product links but keep their SKU/variants in
+            # its public feed. Only fall back before accepting any detail rows.
+            if index != 0 or str(exc) != "empty_or_unparseable_html_table":
+                raise
+            return read_feed()
+        for row in products:
+            key = row["source_sku"]
+            if key in rows and rows[key] != row:
+                raise InvalidRecord("ambiguous_html_product")
+            rows[key] = row
+            if len(rows) > 1000:
+                raise InvalidRecord("html_exceeds_1000_rows")
     return list(rows.values())
 
 
