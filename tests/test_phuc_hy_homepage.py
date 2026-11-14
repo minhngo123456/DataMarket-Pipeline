@@ -8,7 +8,7 @@ import pytest
 from marketdata.contracts import InvalidRecord, iso
 from scripts.demo_source_pipeline import local_pipeline
 from services.ingestion.fetch_errors import RetryableFetchError
-from services.ingestion.phuc_hy import is_homepage, product_urls
+from services.ingestion.storefront import discover
 from services.ingestion.web_worker import collect_html_rows
 from tests.conftest import NOW
 
@@ -21,6 +21,10 @@ PRODUCTS = [
     ("DOUBLE-A-A4-70GSM", 85000), ("FO-ST02", 28000), ("FO-DB01-XANH", 45000),
     ("BKT-10", 40000), ("GEL-072-XANH", 11600), ("FO-CH01", 3300), ("FO-STS02", 3600),
 ]
+
+
+def product_urls(data):
+    return discover(data, HOME).products()
 
 
 def fixture_feeds():
@@ -59,8 +63,7 @@ def test_homepage_discovery_deduplicates_queries_and_rejects_unrelated_destinati
     "http://phuchy.vn/", "https://phuchy.vn/products/paper", "https://another.example/",
     "https://phuchy.vn.evil.example/", "https://phuchy.vn/?search=paper",
 ])
-def test_crawling_is_only_enabled_for_the_exact_https_homepage(url):
-    assert not is_homepage(url)
+def test_readable_pages_do_not_trigger_extra_requests(url):
     calls = []
 
     def fetch(target, headers=None):
@@ -73,7 +76,7 @@ def test_crawling_is_only_enabled_for_the_exact_https_homepage(url):
 
 def test_homepage_budget_stops_before_requesting_more_products(monkeypatch):
     feeds, calls = fixture_feeds(), []
-    clock = iter([0, 1, 21])
+    clock = iter([0, 1, 2, 21])
     monkeypatch.setattr("services.ingestion.web_worker.monotonic", lambda: next(clock))
 
     def fetch(url, headers=None):
@@ -98,7 +101,7 @@ def test_real_fetcher_contract_uses_short_timeouts_for_detail_pages(monkeypatch)
 
 
 def test_no_product_cards_or_oversized_homepage_does_not_trigger_detail_requests():
-    for data, error in ((b"<h1>No products</h1>", "empty_phuc_hy_homepage"), (b"x" * (1024 * 1024 + 1), "html_response_exceeds_1_mib")):
+    for data, error in ((b"<h1>No products</h1>", "html_products_not_found"), (b"x" * (10 * 1024 * 1024 + 1), "html_response_exceeds_10_mib")):
         calls = []
 
         def fetch(url, headers=None, calls=calls, data=data):

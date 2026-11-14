@@ -46,6 +46,7 @@ class ProductHTMLParser(HTMLParser):
         self.stack = []
         self.scripts = []
         self.script = None
+        self.metadata = {}
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -59,13 +60,16 @@ class ProductHTMLParser(HTMLParser):
                 product = None
         if tag == "script" and (attrs.get("type") or "").split(";", 1)[0].strip().lower() == "application/ld+json":
             self.script = []
-        if tag == "meta" and product is not None:
-            fields = {"sku": "source_sku", "price": "price", "priceCurrency": "currency"}
-            for prop in (attrs.get("itemprop") or "").split():
-                if prop in fields and attrs.get("content"):
-                    product.setdefault(fields[prop], set()).add(attrs["content"].strip())
+        if tag == "meta" and attrs.get("property") and attrs.get("content"):
+            self.metadata.setdefault(attrs["property"], set()).add(attrs["content"].strip())
+        fields = {"sku": "source_sku", "price": "price", "priceCurrency": "currency"}
+        props = [fields[prop] for prop in (attrs.get("itemprop") or "").split() if prop in fields]
+        value = attrs.get("content") or (attrs.get("href") if tag == "link" else None)
+        if product is not None and value:
+            for prop in props:
+                product.setdefault(prop, set()).add(value.strip())
         if tag not in VOID_TAGS:
-            self.stack.append((tag, product))
+            self.stack.append((tag, product, props if not value else [], []))
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -75,6 +79,10 @@ class ProductHTMLParser(HTMLParser):
     def handle_data(self, data):
         if self.script is not None:
             self.script.append(data)
+        else:
+            for _, product, props, buffer in self.stack:
+                if product is not None and props:
+                    buffer.append(data)
 
     def handle_endtag(self, tag):
         if tag == "script" and self.script is not None:
@@ -82,6 +90,11 @@ class ProductHTMLParser(HTMLParser):
             self.script = None
         for index in range(len(self.stack) - 1, -1, -1):
             if self.stack[index][0] == tag:
+                for _, product, props, buffer in self.stack[index:]:
+                    value = "".join(buffer).strip()
+                    if product is not None and value:
+                        for prop in props:
+                            product.setdefault(prop, set()).add(value)
                 del self.stack[index:]
                 break
 
@@ -105,6 +118,13 @@ class ProductHTMLParser(HTMLParser):
             except (ValueError, RecursionError):
                 continue
             candidates.extend(_product_rows(document))
+        if not candidates and self.metadata.get("og:type") in ({"product"}, {"og:product"}):
+            fields = {"product:retailer_item_id": "source_sku", "product:price:amount": "price",
+                      "product:price:currency": "currency"}
+            if all(key in self.metadata for key in fields):
+                if any(len(self.metadata[key]) != 1 for key in fields):
+                    raise InvalidRecord("ambiguous_html_product")
+                candidates.append({field: next(iter(self.metadata[key])) for key, field in fields.items()})
         # A page may publish both formats. Conflicting prices for one SKU are
         # rejected rather than silently choosing a variant or an outdated value.
         unique = {}
