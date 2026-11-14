@@ -37,6 +37,7 @@ from services.api.routes.sources import (
 )
 from services.api.routes.tenants import handle_create_tenant
 from services.api.routes.upload import handle_csv_upload_url, handle_get_job_status
+from services.api.source_collection import CollectionUnavailable
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -183,6 +184,13 @@ def handler(event: dict, context=None, store: DynamoStore | None = None) -> dict
         return error("conflict", str(exc), 409)
     except InvalidRecord as exc:
         return error("invalid_request", str(exc), 400)
+    except CollectionUnavailable as exc:
+        return error(
+            str(exc),
+            "Nguồn đã lưu nhưng chưa gửi được yêu cầu thu thập. Hãy thử lại."
+            if exc.source_saved else "Chưa cấu hình hàng đợi thu thập. Cần cập nhật backend và template.",
+            503, {"source_saved": exc.source_saved, **({"job_id": exc.job_id} if exc.job_id else {})},
+        )
     except Exception:
         logger.exception("Internal error processing request")
         return error("internal_server_error", "An unexpected error occurred", 500)

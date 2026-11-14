@@ -19,8 +19,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   Object.values(marketDataApi).forEach((method) => method.mockReset());
   marketDataApi.getSources.mockResolvedValue({ data: [] });
-  marketDataApi.createSource.mockResolvedValue({});
-  marketDataApi.updateSource.mockResolvedValue({});
+  marketDataApi.createSource.mockImplementation(async (payload) => payload.collect_now ? { job_id: 'job-now', collection_status: 'queued' } : {});
+  marketDataApi.updateSource.mockImplementation(async (_, payload) => payload.collect_now ? { job_id: 'job-now', collection_status: 'queued' } : {});
   marketDataApi.deleteSource.mockResolvedValue({});
 });
 
@@ -64,6 +64,7 @@ describe('SourceListPage', () => {
       name: 'Đối thủ A',
       source_id: 'competitor-a',
       kind: 'api',
+      collect_now: true,
       endpoint: 'https://api.example.vn/prices',
       enabled: true,
       headers: { 'User-Agent': 'MarketData' },
@@ -95,8 +96,41 @@ describe('SourceListPage', () => {
     submit(dialog);
     await waitFor(() => expect(marketDataApi.createSource).toHaveBeenCalledWith({
       name: 'Đối thủ A', source_id: 'competitor-a', kind: 'web', enabled: true,
-      endpoint: 'https://phuchy.vn/', price_basis: 'tax_excluded',
+      endpoint: 'https://phuchy.vn/', price_basis: 'tax_excluded', collect_now: true,
     }));
+  });
+
+  it('collects an existing web source immediately and refreshes its real status', async () => {
+    const source = { source_id: 'phuc-hy', name: 'Phục Hy', kind: 'web', enabled: true, url: 'https://phuchy.vn/' };
+    marketDataApi.getSources.mockResolvedValueOnce({ data: [source] })
+      .mockResolvedValueOnce({ data: [{ ...source, collection_status: 'queued', last_job_id: 'job-now' }] })
+      .mockResolvedValue({ data: [{ ...source, collection_status: 'succeeded', last_job_id: 'job-now' }] });
+    marketDataApi.updateSource.mockResolvedValue({ job_id: 'job-now', collection_status: 'queued' });
+    render(<SourceListPage user={admin} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Thu thập Phục Hy' }));
+    expect(await screen.findByText('Chờ xử lý')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thu thập Phục Hy' })).toBeDisabled();
+    expect(marketDataApi.updateSource).toHaveBeenCalledWith('phuc-hy', { collect_now: true });
+    expect(await screen.findByText('Đã thu thập', {}, { timeout: 10000 })).toBeInTheDocument();
+  });
+
+  it('enabling a web source also requests collection', async () => {
+    const source = { source_id: 'phuc-hy', name: 'Phục Hy', kind: 'web', enabled: false };
+    marketDataApi.getSources.mockResolvedValue({ data: [source] });
+    render(<SourceListPage user={admin} />);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Bật/tắt Phục Hy' }));
+    await waitFor(() => expect(marketDataApi.updateSource).toHaveBeenCalledWith('phuc-hy', { enabled: true, collect_now: true }));
+  });
+
+  it('reports an old backend that saves a source without queueing a collection', async () => {
+    marketDataApi.createSource.mockResolvedValue({ status: 'configured' });
+    const dialog = await openDialog();
+    chooseKind(dialog, 'REST API');
+    fireEvent.change(await within(dialog).findByLabelText('Địa chỉ URL'), { target: { value: 'https://api.example.invalid/prices' } });
+    submit(dialog);
+    expect(await screen.findByText(/backend chưa xác nhận job thu thập/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByText('Đã gửi yêu cầu thu thập ngay. Trạng thái sẽ tự cập nhật.')).not.toBeInTheDocument();
   });
 
   it('reloads the authoritative list when POST updates an existing source ID', async () => {

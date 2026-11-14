@@ -8,7 +8,7 @@ CSV/API/Web worker ghi trạng thái vào `SOURCE#<source_id>` và mốc xử l�
 
 | Trường trên SOURCE | Ý nghĩa |
 | --- | --- |
-| `collection_status` | `running`, `retrying`, `succeeded` hoặc `failed` cho lần chạy hiện tại. Chưa từng chạy thì chưa có trường này. |
+| `collection_status` | `queued`, `running`, `retrying`, `succeeded` hoặc `failed` cho lần chạy hiện tại. API ghi queued khi tạo job thu thập theo yêu cầu; chưa có yêu cầu/lần chạy thì trường có thể vắng mặt. |
 | `last_job_id` | Job của lần chạy hiện tại. |
 | `last_attempt_at` | Thời điểm worker bắt đầu xử lý lần đầu cho job hiện tại, UTC ISO 8601; giữ nguyên qua retry của cùng job. |
 | `last_success_at` | Mốc xác nhận thành công lần đầu trên SOURCE cho job thành công được ghi nhận; giữ lại khi lần chạy tiếp theo lỗi. Nếu cần retry ghi health, mốc này có thể muộn hơn `collection_succeeded_at` trên JOB. |
@@ -16,6 +16,8 @@ CSV/API/Web worker ghi trạng thái vào `SOURCE#<source_id>` và mốc xử l�
 | `last_error_code` | Mã lỗi an toàn của trạng thái retry/failed; được bỏ khi bắt đầu xử lý lại hoặc thành công. Không chứa URL, header hoặc nội dung exception tùy ý. |
 
 `GET /sources` đã được chuẩn bị trong code local để trả bảy trường công khai trong bảng khi có giá trị. Trường chưa có hoặc có giá trị null được bỏ khỏi response; client không được suy ra nguồn lỗi hay thành công khi chưa có `collection_status`.
+
+API chỉ ghi `queued` cho job API/Web do server tạo khi nhận `collect_now:true`, hoặc `failed` với mã an toàn nếu enqueue thất bại. Queued đặt last_job_id/thứ tự job, chưa đặt collection_started_at hay thay last_attempt_at. Worker ghi thời điểm bắt đầu thật. Queued delivery muộn không được đưa cùng job từ running/succeeded/failed về queued; success history vẫn giữ theo hợp đồng bên dưới. Lưu cấu hình không có collect_now vẫn giữ health như trước.
 
 Các trường `collection_job_key`, `collection_job_at`, `collection_success_key` dùng nội bộ để so thứ tự và không được trả qua API nguồn. `source_config_revision` do server sinh bằng UUID để kiểm soát cập nhật cấu hình đồng thời; `source_generation` xác định vòng đời nguồn. Cả hai là trường nội bộ, không trả trong response nguồn hoặc nhận giá trị từ client. Trên JOB, `collection_job_at`, `collection_started_at`, `collection_succeeded_at` chỉ được đặt lần đầu, không thay đổi do nhận lại message.
 
