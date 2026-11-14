@@ -9,6 +9,7 @@ import urllib.request
 import boto3
 
 from marketdata.contracts import AccessDenied, InvalidRecord, identifier
+from marketdata.product_metadata import product_metadata
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion.batch import process_source_batch
@@ -87,6 +88,7 @@ def parse_api_payload(data):
         }
         if "price_basis" in item:
             row["price_basis"] = str(item["price_basis"]).strip()
+        row.update(product_metadata(item))
         rows.append(row)
 
     return rows

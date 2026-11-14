@@ -26,6 +26,22 @@ beforeEach(() => {
 const row = (sku) => screen.getByText(sku).closest('tr');
 
 describe('CatalogPage', () => {
+  it('displays product names, variants, safe source link and approves all selected in one dialog', async () => {
+    marketDataApi.getProducts.mockResolvedValue({ data: products.data.map((item) => item.observation_id
+      ? { ...item, source_name: 'Gel pen', source_variant: item.source_sku, source_url: 'https://shop.example/pen', extraction_method: 'ai_rules' } : item) });
+    render(<CatalogPage />);
+    expect(await screen.findByText('Gel pen - SKU-1')).toBeInTheDocument();
+    expect(screen.getAllByText('AI hỗ trợ')).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: 'Xem sản phẩm gốc' })[0]).toHaveAttribute('href', 'https://shop.example/pen');
+    fireEvent.click(screen.getByRole('button', { name: 'Chọn tất cả kết quả chờ duyệt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Duyệt đã chọn (2)' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Tên SKU-1')).toHaveValue('Gel pen - SKU-1');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận duyệt' }));
+    await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledTimes(2));
+    expect(marketDataApi.createProduct).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
   it('lists pending SKUs with the pending count', async () => {
     render(<CatalogPage />);
     expect(await screen.findByText('SKU-1')).toBeInTheDocument();

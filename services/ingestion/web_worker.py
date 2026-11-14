@@ -13,9 +13,11 @@ from time import monotonic
 import boto3
 
 from marketdata.contracts import AccessDenied, InvalidRecord, identifier, iso, timestamp
+from marketdata.product_metadata import product_metadata
 from marketdata.queue import send_rows
 from marketdata.repository import DynamoStore
 from services.ingestion import fahasa
+from services.ingestion.ai_state import build_extractor
 from services.ingestion.batch import process_source_batch
 from services.ingestion.collection import collection_error_code
 from services.ingestion.fetch_errors import RetryableFetchError, http_error_to_exception
@@ -236,6 +238,8 @@ class HTMLTablePriceParser(HTMLParser):
                 or attr_dict.get("data-sale-active"),
                 "currency": attr_dict.get("data-currency") or "VND",
                 "observed_at": attr_dict.get("data-observed-at"),
+                "source_name": attr_dict.get("data-name"),
+                "source_variant": attr_dict.get("data-variant"),
             }
             if "data-price-basis" in attr_dict:
                 row["price_basis"] = attr_dict["data-price-basis"]
@@ -346,6 +350,9 @@ def parse_html_payload(data, observed_at=None, price_basis=None, url=None):
             "currency": str(_present_value(row.get("currency")) or "VND").upper(),
             "observed_at": normalized_observed_at,
         }
+        cleaned.update(product_metadata(row))
+        if url and "source_name" in cleaned:
+            cleaned.update(product_metadata({"source_url": url}))
         row_basis = _present_value(row.get("price_basis")) or price_basis
         if row_basis:
             cleaned["price_basis"] = row_basis
@@ -354,7 +361,7 @@ def parse_html_payload(data, observed_at=None, price_basis=None, url=None):
     return validated_rows
 
 
-def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fetcher=None):
+def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fetcher=None, ai_extractor=None):
     """Read prices directly, then discover products or a public storefront feed."""
     fetch = fetcher or default_fetcher
     started = monotonic()
@@ -385,17 +392,52 @@ def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fet
             raise RetryableFetchError("web_homepage_timeout")
         return result
 
+    def feed_spec():
+        try:
+            return storefront_feed(data, url, discovery)
+        except InvalidRecord as exc:
+            if not ai_extractor or str(exc) != "html_storefront_currency_missing":
+                raise
+            return None
+
     def read_feed():
-        feed = storefront_feed(data, url, discovery)
+        feed = feed_spec()
         if not feed:
+            if ai_extractor:
+                return read_ai(data, url, "root")
             raise InvalidRecord("html_products_not_found")
         feed_url, currency = feed
-        products = parse_storefront_feed(fetch_next(feed_url), currency, _normalize_price)
+        products = parse_storefront_feed(fetch_next(feed_url), currency, _normalize_price, base_url=url)
         for row in products:
             row["observed_at"] = observed_at
             if price_basis:
                 row["price_basis"] = price_basis
         return products
+
+    def read_ai(payload, target, slot):
+        kind, result = ai_extractor.read(payload, target, slot, _normalize_price, observed_at, price_basis)
+        if kind == "rows":
+            return result
+        if slot == "detail":
+            raise InvalidRecord("web_ai_invalid_rules")
+        # One discovery hop only. AI cannot fetch URLs or follow nested links.
+        all_rows = {}
+        for link in result:
+            detail = fetch_next(link)
+            try:
+                products = parse_html_payload(detail, observed_at=observed_at, price_basis=price_basis, url=link)
+            except InvalidRecord as exc:
+                if str(exc) != "empty_or_unparseable_html_table":
+                    raise
+                products = read_ai(detail, link, "detail")
+            for row in products:
+                row["extraction_method"] = "ai_rules"
+                if row["source_sku"] in all_rows and all_rows[row["source_sku"]] != row:
+                    raise InvalidRecord("ambiguous_html_product")
+                all_rows[row["source_sku"]] = row
+                if len(all_rows) > 1000:
+                    raise InvalidRecord("html_exceeds_1000_rows")
+        return list(all_rows.values())
 
     if fahasa.is_homepage(url):
         urls = fahasa.product_urls(fetch_next(fahasa.homepage_feed(data, url)), url)
@@ -413,8 +455,14 @@ def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fet
             # A theme may expose product links but keep their SKU/variants in
             # its public feed. Only fall back before accepting any detail rows.
             if index != 0 or str(exc) != "empty_or_unparseable_html_table":
-                raise
-            return read_feed()
+                if ai_extractor and str(exc) == "empty_or_unparseable_html_table":
+                    products = read_ai(product_data, product_url, "detail")
+                else:
+                    raise
+            elif ai_extractor and not feed_spec():
+                products = read_ai(product_data, product_url, "detail")
+            else:
+                return read_feed()
         for row in products:
             key = row["source_sku"]
             if key in rows and rows[key] != row:
@@ -425,7 +473,7 @@ def collect_html_rows(url, headers=None, observed_at=None, price_basis=None, fet
     return list(rows.values())
 
 
-def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=None):
+def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=None, ai_client=None):
     fetch = fetcher or default_fetcher
 
     if event.get("schema_version") != 1:
@@ -475,11 +523,15 @@ def process_event(event, store, sqs, transform_queue, fetcher=None, snapshots=No
             raise InvalidRecord("missing_web_url")
         # Source timestamps take precedence. Missing times use the job schedule
         # (or UTC now) once, then remain immutable in the persisted snapshot.
-        return collect_html_rows(
+        ai = build_extractor(store, event, current_source, client=ai_client)
+        rows = collect_html_rows(
             url, headers=current_source.get("headers"),
             observed_at=job.get("scheduled_at") or event.get("scheduled_at"),
-            price_basis=current_source.get("price_basis"), fetcher=fetch,
+            price_basis=current_source.get("price_basis"), fetcher=fetch, ai_extractor=ai,
         )
+        if ai:
+            ai.commit()
+        return rows
 
     try:
         snapshot = (snapshots or SourceSnapshots()).get_or_create(event, job, load_rows)
