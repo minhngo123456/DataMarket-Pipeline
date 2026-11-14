@@ -9,7 +9,7 @@ ERROR_CODES = {
     "empty_required_api_field", "missing_api_endpoint", "row_exceeds_32_kib",
     "html_response_exceeds_1_mib", "invalid_html_encoding", "invalid_html_syntax",
     "empty_or_unparseable_html_table", "html_exceeds_1000_rows", "missing_required_html_fields",
-    "invalid_html_observed_at", "invalid_html_price", "missing_web_url",
+    "invalid_html_observed_at", "invalid_html_price", "missing_web_url", "ambiguous_html_product",
     "source_snapshot_invalid_row_count", "source_destination_blocked", "source_url_scheme_not_allowed",
     "csv_exceeds_1_mib", "invalid_csv_headers", "invalid_csv_columns", "csv_exceeds_1000_rows",
     "empty_csv", "invalid_utf8_csv", "source_disabled_or_missing",

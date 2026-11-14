@@ -82,6 +82,22 @@ describe('SourceListPage', () => {
     expect(marketDataApi.createSource).not.toHaveBeenCalled();
   });
 
+  it('requires an explicit tax basis and sends it with a product URL', async () => {
+    const dialog = await openDialog();
+    chooseKind(dialog, 'Trang web tĩnh');
+    fireEvent.change(await within(dialog).findByLabelText('Địa chỉ URL'), { target: { value: 'https://shop.example.invalid/products/paper' } });
+    submit(dialog);
+    expect(await within(dialog).findByText('Chọn cách tính thuế của giá nguồn.')).toBeInTheDocument();
+    expect(marketDataApi.createSource).not.toHaveBeenCalled();
+    fireEvent.mouseDown(within(dialog).getByLabelText('Cách tính thuế của giá nguồn'));
+    fireEvent.click(screen.getByTitle('Giá chưa gồm thuế'));
+    submit(dialog);
+    await waitFor(() => expect(marketDataApi.createSource).toHaveBeenCalledWith({
+      name: 'Đối thủ A', source_id: 'competitor-a', kind: 'web', enabled: true,
+      endpoint: 'https://shop.example.invalid/products/paper', price_basis: 'tax_excluded',
+    }));
+  });
+
   it('reloads the authoritative list when POST updates an existing source ID', async () => {
     const original = { source_id: 'competitor-a', name: 'Tên nguồn cũ', kind: 'csv', enabled: true };
     const other = { source_id: 'other-source', name: 'Nguồn khác', kind: 'csv', enabled: true };
