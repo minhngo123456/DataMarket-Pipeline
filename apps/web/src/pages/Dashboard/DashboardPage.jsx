@@ -1,5 +1,6 @@
 import { ReloadOutlined, RightOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Col, Row, Spin, Statistic, Tag } from 'antd';
+import { Alert, Button, Card, Col, Row, Select, Spin, Statistic, Tag } from 'antd';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { LoadError, PageHeading, SampleLabel } from '../../components/PageHeading.jsx';
 import { apiErrorMessage, useApiData } from '../../hooks/useApiData.js';
@@ -18,10 +19,11 @@ function SourceStatus({ source }) {
 }
 
 export function DashboardPage() {
+  const [basis, setBasis] = useState('tax_included');
   const stats = useApiData(() => marketDataApi.getDashboardStats(), mockStats);
   const sources = useApiData(() => marketDataApi.getSources(), mockSources);
   const alerts = useApiData(() => marketDataApi.getAlerts({ limit: 20 }), mockAlerts);
-  const matrix = useApiData(() => marketDataApi.getPriceMatrix({ reference_source: 'internal', basis: 'tax_included' }), mockMatrix);
+  const matrix = useApiData(() => marketDataApi.getPriceMatrix({ reference_source: 'internal', basis }), basis === 'tax_included' ? mockMatrix : undefined, [basis]);
   const products = useApiData(() => marketDataApi.getProducts({ match_status: 'confirmed', limit: 100 }), mockProducts);
 
   const isMock = [stats, sources, alerts, matrix, products].some((r) => r.isMock);
@@ -70,7 +72,12 @@ export function DashboardPage() {
         </Row>
       )}
 
-      <Card className="panel-card table-panel" variant="borderless">
+      <Card className="panel-card table-panel" variant="borderless" title="Cơ sở so sánh giá" extra={
+        <Select aria-label="Cơ sở so sánh giá" value={basis} onChange={setBasis} options={[
+          { value: 'tax_included', label: 'Giá đã gồm thuế' },
+          { value: 'tax_excluded', label: 'Giá chưa gồm thuế' },
+        ]} />
+      }>
         {matrix.loading || products.loading || sources.loading ? <div className="center-block"><Spin /></div>
           : matrix.error ? <LoadError error={apiErrorMessage(matrix.error)} onRetry={matrix.reload} />
             : <PriceMatrix matrix={matrix.data} products={products.data?.data || []} sources={sources.data?.data || []} />}

@@ -119,7 +119,7 @@ class DynamoStore:
         """
         tenant_id, source_id = identifier(tenant_id), identifier(source_id)
         self.tenant(tenant_id)
-        allowed = {"source_id", "kind", "name", "enabled", "updated_at", "endpoint", "url", "headers"}
+        allowed = {"source_id", "kind", "name", "enabled", "updated_at", "endpoint", "url", "headers", "price_basis"}
         if not fields or not set(fields) <= allowed:
             raise InvalidRecord("invalid_source_configuration")
         if "source_id" in fields and fields["source_id"] != source_id:
