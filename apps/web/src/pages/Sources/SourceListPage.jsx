@@ -10,7 +10,7 @@ import { formatDateTime, timeAgo } from '../../utils/timeHelpers.js';
 const KINDS = [
   { value: 'csv', label: 'CSV (tải tệp lên)' },
   { value: 'api', label: 'REST API' },
-  { value: 'web', label: 'Trang web tĩnh' },
+  { value: 'web', label: 'Trang web' },
 ];
 const MAX_SOURCES = 3;
 const URL_PLACEHOLDER = { api: 'https://api.nha-cung-cap.vn/v1/prices', web: 'https://phuchy.vn/' };
@@ -232,7 +232,7 @@ export function SourceListPage({ user }) {
             <>
               <Form.Item label="Địa chỉ URL" name="endpoint" rules={[{ required: true, message: 'Nhập địa chỉ URL.' }, { pattern: /^https?:\/\/[^\s/]+\S*$/i, message: 'URL phải bắt đầu bằng http:// hoặc https://.' }]}><Input placeholder={URL_PLACEHOLDER[kind]} /></Form.Item>
               {kind === 'web' && <>
-                <Alert type="info" showIcon title="Phục Hy: nhập https://phuchy.vn/ để lấy tối đa 10 sản phẩm đầu trên trang chủ. Các website khác dùng URL sản phẩm có giá trong HTML. SKU mới cần được duyệt trong Catalog." />
+                <Alert type="info" showIcon title="Nhập URL trang chủ, danh mục hoặc sản phẩm. Hệ thống đọc bảng giá, dữ liệu Product và tối đa 10 liên kết sản phẩm cùng website; hỗ trợ thêm nguồn JSON công khai của Haravan/Shopify. Trang cần đăng nhập, chặn bot hoặc chỉ có JavaScript riêng có thể chưa hỗ trợ. SKU mới cần được duyệt trong Catalog." />
                 <Form.Item label="Cách tính thuế của giá nguồn" name="price_basis" preserve={false} extra="Chọn theo thông tin của người bán. Chưa xác định thì giá chưa vào bảng so sánh." rules={[{ required: true, message: 'Chọn cách tính thuế của giá nguồn.' }]}>
                   <Select options={[
                     { value: 'tax_included', label: 'Giá đã gồm thuế' },

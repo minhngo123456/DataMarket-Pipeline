@@ -361,7 +361,8 @@ def test_web_worker_handles_invalid_html(store, sqs_transform_queue):
     process_web_event(event, store, sqs, queue, fetcher=mock_fetcher)
     job = store.get("tenant-a", "JOB#web-job-err")
     assert job["status"] == "failed"
-    assert "empty_or_unparseable" in job["error"]
+    assert job["error"] == "html_products_not_found"
+    assert "source_snapshot" not in job
 
 
 @pytest.mark.parametrize(
@@ -416,9 +417,9 @@ def test_payload_parsers_validation():
             ).encode()
         )
 
-    # Exceeding 1 MiB
-    with pytest.raises(InvalidRecord, match="exceeds_1_mib"):
-        parse_html_payload(b"x" * (1024 * 1024 + 1))
+    # HTML supports larger storefront pages, while CSV/API retain their own limits.
+    with pytest.raises(InvalidRecord, match="html_response_exceeds_10_mib"):
+        parse_html_payload(b"x" * (10 * 1024 * 1024 + 1))
 
 
 def test_html_parser_normalizes_common_header_aliases_and_rejects_empty_fields():
