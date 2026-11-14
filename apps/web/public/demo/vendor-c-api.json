@@ -1,9 +1,24 @@
 {
   "data": [
-    { "source_sku": "IP15-128", "price": 19590000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
-    { "source_sku": "IP15-256", "price": 22790000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
-    { "source_sku": "S24-256", "price": 18190000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
-    { "source_sku": "MBA-M3", "price": 26790000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" },
-    { "source_sku": "AIRPODS-PRO2", "price": 5390000, "currency": "VND", "observed_at": "2026-11-02T10:15:00Z", "price_basis": "tax_included" }
+    {"source_sku": "IP18PM-256", "price": 41990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP18P-256", "price": 38990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP17PM-256", "price": 34990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP17P-256", "price": 31990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP17-256", "price": 28490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IPAIR-256", "price": 22990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP17E-256", "price": 20990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP16-128", "price": 24490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP16E-128", "price": 18990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "IP15-128", "price": 21490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "S26U-256", "price": 31990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "S26-256", "price": 20990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "S26FE-128", "price": 15490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "S25U-256", "price": 25490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "ZFLIP8-256", "price": 26990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "ZFOLD8U-256", "price": 47490000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "RN17-5G-128", "price": 8690000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "RN17PM-512", "price": 16690000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "FINDX9U-512", "price": 45990000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"},
+    {"source_sku": "RENO16F-256", "price": 15690000, "currency": "VND", "observed_at": "2026-11-13T15:56:58.077586Z", "price_basis": "tax_included"}
   ]
 }
