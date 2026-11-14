@@ -889,7 +889,7 @@ class DynamoStore:
         replace the current run, and a successful run cannot regress.
         """
         if kind not in ("csv", "api", "web") or status not in (
-            "running", "retrying", "succeeded", "failed"
+            "queued", "running", "retrying", "succeeded", "failed"
         ):
             raise InvalidRecord("invalid_collection_status")
         if error_code is not None and (
@@ -900,7 +900,7 @@ class DynamoStore:
         self.tenant(tenant_id)
         source = self.get(tenant_id, "SOURCE#" + source_id)
         job = self.get(tenant_id, "JOB#" + job_id)
-        allowed_states = ["queued", "extracting", "normalizing"]
+        allowed_states = ["queued"] if status == "queued" else ["queued", "extracting", "normalizing"]
         if status == "succeeded":
             allowed_states.append("completed")
         elif status == "failed":
@@ -916,13 +916,13 @@ class DynamoStore:
         job_at = iso(timestamp(
             job.get("collection_job_at") or job.get("scheduled_at") or job.get("created_at") or at
         ))
-        job_values = {":source": source_id, ":kind": kind, ":at": at, ":job_at": job_at}
+        job_values = {":source": source_id, ":kind": kind, ":job_at": job_at}
         job_values.update({f":state{i}": value for i, value in enumerate(allowed_states)})
         state_params = ", ".join(f":state{i}" for i in range(len(allowed_states)))
-        job_update = (
-            "SET collection_job_at = if_not_exists(collection_job_at, :job_at), "
-            "collection_started_at = if_not_exists(collection_started_at, :at)"
-        )
+        job_update = "SET collection_job_at = if_not_exists(collection_job_at, :job_at)"
+        if status != "queued":
+            job_values[":at"] = at
+            job_update += ", collection_started_at = if_not_exists(collection_started_at, :at)"
         if status == "succeeded":
             job_update += ", collection_succeeded_at = if_not_exists(collection_succeeded_at, :at)"
         try:
@@ -943,19 +943,24 @@ class DynamoStore:
         values = {
             ":kind": kind, ":enabled": True, ":run": run_key,
             ":job_at": job["collection_job_at"], ":job": job_id,
-            ":attempt": job["collection_started_at"], ":status": status,
-            ":success": "succeeded",
+            ":status": status,
         }
         generation_guard, generation_values = generation_condition(job.get("source_generation"))
         values.update(generation_values)
-        same_job_guard = "collection_status <> :success"
+        same_job_guard = "collection_status = :status"
+        if status != "queued":
+            same_job_guard = "collection_status <> :success"
+            values[":success"] = "succeeded"
         if status in ("running", "retrying"):
             same_job_guard += " AND collection_status <> :failed"
             values[":failed"] = "failed"
         update = (
             "SET collection_job_key = :run, collection_job_at = :job_at, "
-            "last_job_id = :job, last_attempt_at = :attempt, collection_status = :status"
+            "last_job_id = :job, collection_status = :status"
         )
+        if status != "queued":
+            values[":attempt"] = job["collection_started_at"]
+            update += ", last_attempt_at = :attempt"
         if status in ("retrying", "failed"):
             update += ", last_error_code = :error"
             values[":error"] = error_code or kind + "_worker_error"

@@ -1010,6 +1010,10 @@ Resources:
             Ref: ReportsBucket
           REPORT_QUEUE_URL:
             Ref: ReportQueue
+          API_QUEUE_URL:
+            Ref: APIQueue
+          WEB_QUEUE_URL:
+            Ref: WebQueue
           USER_POOL_ID:
             Ref: UserPool
       Policies:
@@ -1033,8 +1037,14 @@ Resources:
           Action:
           - sqs:SendMessage
           Resource:
-            Fn::GetAtt:
+          - Fn::GetAtt:
             - ReportQueue
+            - Arn
+          - Fn::GetAtt:
+            - APIQueue
+            - Arn
+          - Fn::GetAtt:
+            - WebQueue
             - Arn
   ReportAggregator:
     Type: AWS::Serverless::Function
