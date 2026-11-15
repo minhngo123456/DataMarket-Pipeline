@@ -329,6 +329,19 @@ class DynamoStore:
             raise
         return self.get(tenant_id, "META")
 
+    def set_report_topic(self, tenant_id, topic_arn):
+        """Record the tenant's report topic once; never repoint an existing one."""
+        try:
+            self.control.update_item(
+                Key={"pk": pk(tenant_id), "sk": "META"},
+                UpdateExpression="SET sns_topic_arn = :arn",
+                ConditionExpression="attribute_exists(pk) AND "
+                "(attribute_not_exists(sns_topic_arn) OR sns_topic_arn = :arn)",
+                ExpressionAttributeValues={":arn": topic_arn},
+            )
+        except self.control.meta.client.exceptions.ConditionalCheckFailedException as exc:
+            raise Conflict("report_topic_already_set") from exc
+
     def source(self, tenant_id, source_id):
         self.tenant(tenant_id)
         result = self.get(tenant_id, "SOURCE#" + identifier(source_id))
