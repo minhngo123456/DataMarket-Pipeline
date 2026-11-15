@@ -121,4 +121,41 @@ describe('CatalogPage', () => {
     await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledWith('obs1', { observation_id: 'obs1', product_id: null, action: 'reject' }));
     await waitFor(() => expect(screen.queryByText('SKU-1')).not.toBeInTheDocument());
   });
+
+  it('rejects all selected pending SKUs after one confirmation', async () => {
+    render(<CatalogPage />);
+    await screen.findByText('SKU-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Chọn tất cả kết quả chờ duyệt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Từ chối đã chọn (2)' }));
+    const confirm = await waitFor(() => {
+      const dialog = document.querySelector('.ant-modal-confirm');
+      expect(dialog).not.toBeNull();
+      return dialog;
+    });
+    expect(within(confirm).getAllByText('Từ chối 2 SKU đã chọn?').length).toBeGreaterThan(0);
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Từ chối tất cả' }));
+    await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledTimes(2));
+    expect(marketDataApi.matchProduct).toHaveBeenCalledWith('obs1', { observation_id: 'obs1', product_id: null, action: 'reject' });
+    expect(marketDataApi.matchProduct).toHaveBeenCalledWith('obs2', { observation_id: 'obs2', product_id: null, action: 'reject' });
+    await waitFor(() => expect(screen.queryByText('SKU-2')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Từ chối đã chọn (0)' })).toBeDisabled();
+  });
+
+  it('keeps a SKU pending and selectable again when its reject fails', async () => {
+    marketDataApi.matchProduct.mockImplementation((id) => (id === 'obs2' ? Promise.reject(new Error('boom')) : Promise.resolve({})));
+    render(<CatalogPage />);
+    await screen.findByText('SKU-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Chọn tất cả kết quả chờ duyệt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Từ chối đã chọn (2)' }));
+    const confirm = await waitFor(() => {
+      const dialog = document.querySelector('.ant-modal-confirm');
+      expect(dialog).not.toBeNull();
+      return dialog;
+    });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Từ chối tất cả' }));
+    await waitFor(() => expect(marketDataApi.matchProduct).toHaveBeenCalledTimes(2));
+    // The failed SKU is reloaded from the server and stays in the pending list.
+    await waitFor(() => expect(marketDataApi.getProducts).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('SKU-2')).toBeInTheDocument();
+  });
 });
