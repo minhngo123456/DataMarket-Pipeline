@@ -150,6 +150,45 @@ export function CatalogPage() {
     onOk: () => review(row, 'reject'),
   });
 
+  const rejectSelected = () => {
+    const targets = rows.filter((row) => row.match_status === 'pending' && selected.includes(rowKey(row)));
+    if (!targets.length) return;
+    Modal.confirm({
+      title: `Từ chối ${targets.length} SKU đã chọn?`,
+      content: 'Các dòng giá này sẽ không vào ma trận so sánh. Lần nhập sau các SKU này vẫn sẽ vào hàng chờ.',
+      okText: 'Từ chối tất cả',
+      okButtonProps: { danger: true },
+      cancelText: 'Hủy',
+      onOk: async () => {
+        setBatchRunning(true);
+        let done = 0;
+        let failed = 0;
+        try {
+          // One at a time, like batch approve, so a failure leaves the rest untouched and visible.
+          for (const row of targets) {
+            try {
+              if (!products.isMock) {
+                await marketDataApi.matchProduct(row.observation_id, { observation_id: row.observation_id, product_id: null, action: 'reject' });
+              }
+              settle(row, 'rejected');
+              setSelected((keys) => keys.filter((key) => key !== rowKey(row)));
+              done += 1;
+            } catch {
+              failed += 1;
+            }
+          }
+        } finally {
+          setBatchRunning(false);
+        }
+        if (done) message.success(`Đã từ chối ${done} SKU.`);
+        if (failed) {
+          message.error(`${failed} SKU chưa từ chối được, vui lòng thử lại.`);
+          if (!products.isMock) products.reload();
+        }
+      },
+    });
+  };
+
   const columns = [
     {
       title: 'SẢN PHẨM / SKU NGUỒN',
@@ -186,6 +225,7 @@ export function CatalogPage() {
       <Space style={{ margin: '12px 0' }}>
         <Button disabled={batchRunning || !filtered.some((row) => row.match_status === 'pending')} onClick={() => setSelected(filtered.filter((row) => row.match_status === 'pending').map(rowKey))}>Chọn tất cả kết quả chờ duyệt</Button>
         <Button type="primary" disabled={!selected.length || batchRunning || Boolean(busy)} onClick={openBatch}>Duyệt đã chọn ({selected.length})</Button>
+        <Button danger disabled={!selected.length || batchRunning || Boolean(busy)} onClick={rejectSelected}>Từ chối đã chọn ({selected.length})</Button>
       </Space>
       <Card className="panel-card table-panel" variant="borderless">
         <div className="table-toolbar">
