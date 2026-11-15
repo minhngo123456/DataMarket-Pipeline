@@ -8,7 +8,7 @@
 [![Course](https://img.shields.io/badge/Course-INT3319%201-purple.svg)](#)
 
 > **Môn học:** Điện toán đám mây (2627I_INT3319_1)  
-> **Giảng viên hướng dẫn:** Hoàng Xuân Tùng  
+> **Giảng viên hướng dẫn:** TS. Hoàng Xuân Tùng  
 > **Nhóm thực hiện:** Nhóm 07 
 
 | STT | Thành viên | MSSV | Vai trò chính |
