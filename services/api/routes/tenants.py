@@ -6,6 +6,7 @@ import uuid
 from marketdata.contracts import AccessDenied
 from marketdata.repository import DynamoStore
 from services.api.auth import extract_claims
+from services.api.report_email import sync_report_email
 from services.api.response import error, ok
 
 MIN_NAME_LENGTH = 2
@@ -38,4 +39,8 @@ def handle_create_tenant(event: dict, store: DynamoStore) -> dict:
 
     tenant_id = "t-" + uuid.uuid4().hex
     store.create_tenant(tenant_id, user_id, name, email)
-    return ok({"tenant_id": tenant_id, "name": name, "role": "admin", "status": "active"}, status_code=201)
+    report_email = sync_report_email(store, tenant_id, email, "admin", "active")
+    return ok(
+        {"tenant_id": tenant_id, "name": name, "role": "admin", "status": "active", "report_email": report_email},
+        status_code=201,
+    )
