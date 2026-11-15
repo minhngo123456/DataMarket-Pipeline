@@ -170,7 +170,11 @@ def test_disabled_and_deleted_sources_stop_dispatch_without_erasing_history():
         assert p.run_sources("api")["received"] == 0
         assert p.run_sources("web")["received"] == 0
         assert len(p.fetch_calls) == 2
-        assert matrix_prices(p.matrix()) == before
+        # A disabled source keeps its column; a deleted one leaves comparisons at once.
+        assert any(source == "web_competitor" for _, source in before)
+        assert matrix_prices(p.matrix()) == {
+            key: price for key, price in before.items() if key[1] != "web_competitor"
+        }
         status, sources = p.api("GET", "/sources")
         assert status == 200
         assert len(sources["data"]) == 1
