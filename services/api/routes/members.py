@@ -9,6 +9,7 @@ from boto3.dynamodb.conditions import Key
 from marketdata.contracts import AccessDenied, Conflict, QuotaExceeded, identifier, stable_id
 from marketdata.repository import DynamoStore, pk
 from services.api.auth import AuthContext
+from services.api.report_email import sync_report_email
 from services.api.response import error, ok
 
 
@@ -114,6 +115,7 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cog
     user_id = identifier(user_id)
 
     store.save_member(auth.tenant_id, user_id, role, email)
+    report_email = sync_report_email(store, auth.tenant_id, email, role, "active")
 
     return ok(
         {
@@ -121,6 +123,7 @@ def handle_invite_member(event: dict, store: DynamoStore, auth: AuthContext, cog
             "email": email,
             "role": role,
             "status": "active",
+            "report_email": report_email,
             "message": "Đã thêm thành viên thành công.",
         },
         status_code=201,
@@ -167,11 +170,15 @@ def handle_patch_member(event: dict, store: DynamoStore, auth: AuthContext) -> d
     updated_rec = store.save_member(
         auth.tenant_id, user_id, new_role, None, new_status, must_exist=True,
     )
+    report_email = sync_report_email(
+        store, auth.tenant_id, updated_rec.get("email"), updated_rec["role"], updated_rec["status"],
+    )
 
     return ok({
         "user_id": user_id,
         "email": updated_rec.get("email"),
         "role": updated_rec["role"],
         "status": updated_rec["status"],
+        "report_email": report_email,
         "message": "Cập nhật vai trò thành viên thành công.",
     })

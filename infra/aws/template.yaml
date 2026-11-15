@@ -1016,9 +1016,27 @@ Resources:
             Ref: WebQueue
           USER_POOL_ID:
             Ref: UserPool
+          NOTIFICATION_STACK_NAME:
+            Ref: AWS::StackName
+          NOTIFICATION_KEY_ARN:
+            Fn::GetAtt:
+            - NotificationKey
+            - Arn
+          AWS_ACCOUNT_ID:
+            Ref: AWS::AccountId
       Policies:
       - Ref: ApiDataPolicy
       - Statement:
+        - Effect: Allow
+          Action:
+          - sns:CreateTopic
+          - sns:TagResource
+          - sns:SetTopicAttributes
+          - sns:ListSubscriptionsByTopic
+          - sns:Subscribe
+          - sns:Unsubscribe
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-tenant-*
         - Effect: Allow
           Action:
           - cognito-idp:AdminGetUser
