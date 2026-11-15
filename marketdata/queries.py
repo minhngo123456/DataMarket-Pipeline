@@ -22,9 +22,13 @@ def price_matrix(store, tenant_id, now, reference_source="internal", basis="tax_
     if basis not in ("tax_included", "tax_excluded"):
         raise InvalidRecord("explicit_price_basis_required")
     start = now - timedelta(hours=24)
+    # Deleting a source keeps its price history but removes it from comparisons at once.
+    configured = {item["sk"].removeprefix("SOURCE#") for item in store.sources(tenant_id)}
     latest = {}
     for row in store.window(tenant_id, start, now):
         if row["price_basis"] != basis or int(row["expires_at"]) <= now.timestamp():
+            continue
+        if row["source_id"] not in configured:
             continue
         key = (row["product_id"], row["source_id"])
         if key not in latest or (row["observed_at"], row["observation_id"]) > (

@@ -267,3 +267,12 @@ def test_rolling_window_crosses_utc_midnight_and_excludes_exact_end(store, messa
     rows = price_matrix(store, "tenant-a", NOW)["rows"]
     assert len(rows) == 1
     assert rows[0]["observed_at"].startswith("2026-10-18T23:59:59")
+
+
+def test_deleted_source_leaves_the_matrix_but_keeps_history(store, message):
+    ingest(message, store, NOW)
+    assert price_matrix(store, "tenant-a", NOW)["rows"]
+    store.delete_source_configuration("tenant-a", "vendor", previous=store.get("tenant-a", "SOURCE#vendor"))
+
+    assert not price_matrix(store, "tenant-a", NOW)["rows"]
+    assert len(history(store, "tenant-a", "phone", NOW)) == 1
