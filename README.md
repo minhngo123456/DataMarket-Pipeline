@@ -9,7 +9,7 @@
 
 > **Môn học:** Điện toán đám mây (2627I_INT3319_1)  
 > **Giảng viên hướng dẫn:** Hoàng Xuân Tùng  
-> **Nhóm thực hiện:** Nhóm 07 (Khóa 26-27)
+> **Nhóm thực hiện:** Nhóm 07 
 
 | STT | Thành viên | MSSV | Vai trò chính |
 | :---: | :--- | :---: | :--- |
